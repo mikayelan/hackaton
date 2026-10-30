@@ -1,8 +1,12 @@
 """
 fused_lora.py — Fused LoRA: base + scaling * (x @ A @ B).
+ПАТЧИТ: PEFT LoraLinear.forward
 
-ПАТЧИТ: PEFT LoraLayer — подменяет forward на fused версию.
-Это работает — Soup использует PEFT для LoRA адаптеров.
+ИСПРАВЛЕНИЯ v2:
+  - Правильный вызов base_layer (работает с 4-bit квантованными весами)
+  - Safe проверка атрибутов PEFT
+  - Правильная обработка scaling (dict vs float)
+  - Правильная обработка dropout
 """
 import torch
 import triton
@@ -22,12 +26,12 @@ def _fused_lora_kernel(
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_K: tl.constexpr,
-    R: tl.constexpr,  # R must be constexpr for Triton loops
+    R: tl.constexpr,
 ):
     """
     out = base + scaling * (x @ A^T @ B^T)
     A is [R, K], B is [N, R]
-    R is fixed at compile time (16 for this task).
+    R is constexpr (16 for this task).
     """
     pid_m = tl.program_id(0)
     pid_n = tl.program_id(1)
@@ -42,31 +46,25 @@ def _fused_lora_kernel(
         mask=m_mask[:, None] & n_mask[None, :], other=0.0,
     ).to(tl.float32)
 
-    # Compute x @ A^T @ B^T
     lora_acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
 
     for k_start in range(0, K, BLOCK_K):
         k_off = k_start + tl.arange(0, BLOCK_K)
         k_mask = k_off < K
 
-        # Load x block [BLOCK_M, BLOCK_K]
         x_block = tl.load(
             x_ptr + m_off[:, None] * stride_xm + k_off[None, :] * stride_xk,
             mask=m_mask[:, None] & k_mask[None, :], other=0.0,
         ).to(tl.float32)
 
-        # For each r: compute dot(x_block, A[r, :]) * B[n, r]
         for r in range(R):
-            # A[r, k_start:k_start+BLOCK_K]
             a_block = tl.load(
                 lora_a_ptr + r * stride_ar + k_off * stride_ak,
                 mask=k_mask, other=0.0,
             ).to(tl.float32)
 
-            # dot product: [BLOCK_M] = sum_k x_block[m,k] * a_block[k]
-            xa = tl.sum(x_block * a_block[None, :], axis=1)  # [BLOCK_M]
+            xa = tl.sum(x_block * a_block[None, :], axis=1)
 
-            # B[n, r]
             b_val = tl.load(
                 lora_b_ptr + n_off * stride_bn_lora + r * stride_br,
                 mask=n_mask, other=0.0,
@@ -103,15 +101,19 @@ def fused_lora_forward(base_output, x, lora_A, lora_B, scaling):
             lora_B.stride(0), lora_B.stride(1),
             scaling,
             BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
-            R=R,  # R is constexpr
+            R=R,
         )
     return out
 
 
 def patch_lora():
     """
-    РЕАЛЬНЫЙ ПАТЧ: подменяет PEFT LoraLayer.
-    Это работает — Soup использует PEFT для LoRA.
+    РЕАЛЬНЫЙ ПАТЧ: PEFT LoraLinear.forward
+
+    ИСПРАВЛЕНИЕ v2:
+      - Используем self.base_layer(x) вместо F.linear — работает с 4-bit
+      - Safe проверка всех атрибутов
+      - Правильная обработка scaling (может быть dict или float)
     """
     try:
         from peft.tuners.lora.layer import Linear as LoraLinear
@@ -119,48 +121,59 @@ def patch_lora():
         _orig_forward = LoraLinear.forward
 
         def patched_forward(self, x: torch.Tensor, *args, **kwargs):
-            # Базовый linear
-            result = torch.nn.functional.linear(
-                x, self.base_layer.weight, self.base_layer.bias
-            )
+            # ИСПРАВЛЕНИЕ: вызываем base_layer(x) — это работает с квантованными весами
+            # F.linear(x, self.base_layer.weight) НЕ работает с 4-bit!
+            result = self.base_layer(x, *args, **kwargs)
 
             # LoRA адаптер (если активен)
-            if self.active_adapter in self.lora_A:
-                adapter = self.active_adapter
+            active_adapter = self.active_adapter
+            if isinstance(active_adapter, str):
+                adapters = [active_adapter]
+            elif hasattr(active_adapter, '__iter__'):
+                adapters = list(active_adapter)
+            else:
+                adapters = [active_adapter]
+
+            for adapter in adapters:
+                if adapter not in self.lora_A:
+                    continue
+                if adapter == "default" and not hasattr(self, 'active_adapter'):
+                    continue
+
                 lora_A = self.lora_A[adapter].weight  # [R, K]
                 lora_B = self.lora_B[adapter].weight  # [N, R]
-                
+
                 # scaling может быть dict или float
                 if isinstance(self.scaling, dict):
                     scaling = self.scaling[adapter]
+                elif hasattr(self.scaling, '__getitem__'):
+                    try:
+                        scaling = self.scaling[adapter]
+                    except (KeyError, TypeError):
+                        scaling = float(self.scaling)
                 else:
-                    scaling = self.scaling
+                    scaling = float(self.scaling)
 
                 # Dropout если нужен
                 x_lora = x
                 if hasattr(self, 'lora_dropout') and adapter in self.lora_dropout:
-                    if self.lora_dropout[adapter].p > 0:
-                        x_lora = self.lora_dropout[adapter](x)
+                    dropout_layer = self.lora_dropout[adapter]
+                    if dropout_layer is not None and dropout_layer.p > 0:
+                        x_lora = dropout_layer(x)
 
                 # Fused LoRA
-                if x_lora.dim() == 2:  # [M, K]
-                    result = fused_lora_forward(
-                        result, x_lora, lora_A, lora_B, scaling
-                    )
+                if x_lora.dim() == 2:
+                    result = fused_lora_forward(result, x_lora, lora_A, lora_B, scaling)
                 else:
-                    # Для 3D тензоров — reshape и fused
                     orig_shape = x_lora.shape
                     x_2d = x_lora.reshape(-1, orig_shape[-1])
                     result_2d = result.reshape(-1, result.shape[-1])
-                    result_fused = fused_lora_forward(
-                        result_2d, x_2d, lora_A, lora_B, scaling
-                    )
+                    result_fused = fused_lora_forward(result_2d, x_2d, lora_A, lora_B, scaling)
                     result = result_fused.reshape(orig_shape[:-1] + (result.shape[-1],))
 
             return result
 
         LoraLinear.forward = patched_forward
-
     except (ImportError, AttributeError) as e:
         import warnings
         warnings.warn(f"[!] Could not patch PEFT LoraLinear: {e}")

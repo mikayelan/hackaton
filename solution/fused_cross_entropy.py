@@ -2,6 +2,11 @@
 fused_cross_entropy.py — Fused Cross-Entropy with online log-sum-exp.
 ПАТЧИТ: Qwen2ForCausalLM.forward
 Экономия: ~8-10 ГБ памяти (не материализует softmax по 152K).
+
+ИСПРАВЛЕНИЯ v2:
+  - Не даём оригинальному forward считать loss (убираем labels из kwargs)
+  - Это убирает двойную работу и утечку autograd graph
+  - Правильный BLOCK_V для V=152K
 """
 import torch
 import torch.nn as nn
@@ -27,7 +32,7 @@ def _fused_ce_forward_kernel(
         tl.store(loss_ptr + pid, 0.0)
         return
 
-    # Pass 1: find max logit
+    # Pass 1: find max logit (numerical stability)
     max_logit = float('-inf')
     for v_start in range(0, V, BLOCK_V):
         v_off = v_start + tl.arange(0, BLOCK_V)
@@ -102,7 +107,9 @@ class FusedCEFunction(torch.autograd.Function):
         N, V = logits.shape
         logits_f32 = logits.float() if logits.dtype == torch.float16 else logits
         per_token_loss = torch.empty(N, device=logits.device, dtype=torch.float32)
-        BLOCK_V = min(4096, triton.next_power_of_2(min(V, 4096)))
+
+        # Optimal BLOCK_V: for V=152K, use 4096 (fits in shared mem)
+        BLOCK_V = 4096
 
         with TIMER.record("fused_ce_forward"):
             _fused_ce_forward_kernel[(N,)](
@@ -155,19 +162,31 @@ class FusedCrossEntropyLoss(nn.Module):
 
 
 def patch_cross_entropy():
-    """РЕАЛЬНЫЙ ПАТЧ: Qwen2ForCausalLM.forward"""
+    """
+    РЕАЛЬНЫЙ ПАТЧ: Qwen2ForCausalLM.forward
+
+    ИСПРАВЛЕНИЕ v2: НЕ даём оригинальному forward считать loss.
+    Убираем labels из kwargs перед вызовом — тогда forward не тратит
+    время на CE и не создаёт autograd graph для loss.
+    Мы считаем loss сами через fused kernel.
+    """
     try:
         from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM
         _orig = Qwen2ForCausalLM.forward
 
         def patched(self, *args, **kwargs):
+            labels = kwargs.pop('labels', None)
+
+            # Вызываем оригинальный forward БЕЗ labels — он не будет считать loss
             outputs = _orig(self, *args, **kwargs)
-            if kwargs.get('labels') is not None and outputs.loss is not None:
+
+            # Считаем loss сами через fused kernel
+            if labels is not None:
                 logits = outputs.logits
-                labels = kwargs['labels']
                 shift_logits = logits[..., :-1, :].contiguous()
                 shift_labels = labels[..., 1:].contiguous()
                 outputs.loss = FusedCrossEntropyLoss()(shift_logits, shift_labels)
+
             return outputs
 
         Qwen2ForCausalLM.forward = patched
