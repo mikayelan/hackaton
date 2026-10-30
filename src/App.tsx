@@ -1,36 +1,350 @@
-import { useState } from 'react'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { useState, useEffect } from 'react'
 
-type Tab = 'overview' | 'files' | 'profile' | 'checklist'
+type Tab = 'quick' | 'overview' | 'files' | 'profile' | 'checklist'
 
-interface FileNode {
-  name: string
-  path: string
-  type: 'file' | 'folder'
-  language?: string
-  description?: string
-  children?: FileNode[]
-  content?: string
+function App() {
+  const [activeTab, setActiveTab] = useState<Tab>('quick')
+  const [copied, setCopied] = useState(false)
+  const [setupScript, setSetupScript] = useState('')
+
+  useEffect(() => {
+    fetch('/setup.sh')
+      .then(r => r.text())
+      .then(setSetupScript)
+      .catch(() => setSetupScript('# Load failed'))
+  }, [])
+
+  const copyScript = () => {
+    navigator.clipboard.writeText(setupScript)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2500)
+  }
+
+  const downloadScript = () => {
+    const blob = new Blob([setupScript], { type: 'text/x-shellscript' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'setup.sh'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const tabs: { id: Tab; label: string; icon: string }[] = [
+    { id: 'quick', label: 'Быстрый старт', icon: '🚀' },
+    { id: 'overview', label: 'Обзор', icon: '🎯' },
+    { id: 'files', label: 'Файлы', icon: '📁' },
+    { id: 'profile', label: 'GPU Профиль', icon: '📊' },
+    { id: 'checklist', label: 'Чеклист', icon: '✅' },
+  ]
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-gray-100">
+      <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center text-xl">
+              🍲
+            </div>
+            <div>
+              <h1 className="text-lg font-bold text-white">Soup Kernel Challenge</h1>
+              <p className="text-xs text-gray-400">Decentrathon 6.0 • Triton kernels</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="px-2 py-1 rounded bg-green-900/50 text-green-400 border border-green-800">Kaggle T4</span>
+            <span className="px-2 py-1 rounded bg-blue-900/50 text-blue-400 border border-blue-800">Triton 3.6</span>
+            <span className="px-2 py-1 rounded bg-purple-900/50 text-purple-400 border border-purple-800">fp16</span>
+          </div>
+        </div>
+      </header>
+
+      <nav className="border-b border-gray-800 bg-gray-900/40">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="flex gap-1 overflow-x-auto">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
+                  activeTab === tab.id
+                    ? 'border-orange-500 text-orange-400'
+                    : 'border-transparent text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                <span className="mr-1.5">{tab.icon}</span>
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </nav>
+
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {activeTab === 'quick' && (
+          <QuickStartTab
+            setupScript={setupScript}
+            copyScript={copyScript}
+            downloadScript={downloadScript}
+            copied={copied}
+          />
+        )}
+        {activeTab === 'overview' && <OverviewTab />}
+        {activeTab === 'files' && <FilesTab />}
+        {activeTab === 'profile' && <ProfileTab />}
+        {activeTab === 'checklist' && <ChecklistTab />}
+      </main>
+    </div>
+  )
 }
 
-const projectTree: FileNode = {
-  name: 'soup-kernel-challenge',
-  path: '',
-  type: 'folder',
-  children: [
+function QuickStartTab({
+  setupScript,
+  copyScript,
+  downloadScript,
+  copied,
+}: {
+  setupScript: string
+  copyScript: () => void
+  downloadScript: () => void
+  copied: boolean
+}) {
+  return (
+    <div className="space-y-6">
+      {/* Hero */}
+      <div className="bg-gradient-to-br from-orange-900/30 to-red-900/30 border border-orange-800/50 rounded-xl p-6">
+        <h2 className="text-2xl font-bold text-white mb-2">🚀 Как перенести решение в свой репо</h2>
+        <p className="text-gray-300">
+          Скопируй setup-скрипт и запусти его в папке своего репозитория хакатона.
+          Он создаст все файлы решения.
+        </p>
+      </div>
+
+      {/* Steps */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-white mb-4">📋 Пошаговая инструкция</h3>
+        <div className="space-y-4">
+          <Step num={1} title="Клонируй репо хакатона">
+            <Code>git clone https://github.com/hackathon-platform/YOUR_TEAM_REPO.git</Code>
+            <Code>cd YOUR_TEAM_REPO</Code>
+          </Step>
+
+          <Step num={2} title="Скопируй setup.sh">
+            <p className="text-sm text-gray-400 mb-2">
+              Нажми кнопку «Копировать» ниже или «Скачать файл»
+            </p>
+          </Step>
+
+          <Step num={3} title="Создай setup.sh и вставь содержимое">
+            <Code>nano setup.sh</Code>
+            <p className="text-xs text-gray-500">Вставь скопированный скрипт, сохрани (Ctrl+O, Enter, Ctrl+X)</p>
+          </Step>
+
+          <Step num={4} title="Запусти setup.sh">
+            <Code>bash setup.sh</Code>
+            <p className="text-xs text-gray-500">Скрипт создаст все файлы: solution/, tests/, task/</p>
+          </Step>
+
+          <Step num={5} title="Проверь что всё создалось">
+            <Code>ls -la solution/</Code>
+            <p className="text-xs text-gray-500">Должны быть: __init__.py, apply_kernels.py, fused_*.py, utils.py</p>
+          </Step>
+
+          <Step num={6} title="Закоммить и запушь">
+            <Code>git add .</Code>
+            <Code>git commit -m "Add Soup Kernel Challenge solution"</Code>
+            <Code>git push</Code>
+          </Step>
+        </div>
+      </div>
+
+      {/* Script box */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 bg-gray-800/30">
+          <div>
+            <h3 className="text-sm font-semibold text-white">setup.sh</h3>
+            <p className="text-xs text-gray-400">Скрипт создаёт все файлы решения</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={downloadScript}
+              className="px-3 py-1.5 rounded text-xs font-medium bg-blue-900/50 text-blue-400 border border-blue-800 hover:bg-blue-900"
+            >
+              ⬇ Скачать файл
+            </button>
+            <button
+              onClick={copyScript}
+              className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
+                copied
+                  ? 'bg-green-900/50 text-green-400 border-green-800'
+                  : 'bg-orange-900/50 text-orange-400 border-orange-800 hover:bg-orange-900'
+              }`}
+            >
+              {copied ? '✓ Скопировано!' : '📋 Копировать всё'}
+            </button>
+          </div>
+        </div>
+        <div className="overflow-auto max-h-[500px]">
+          <pre className="text-xs text-gray-300 font-mono p-4 whitespace-pre">{setupScript}</pre>
+        </div>
+      </div>
+
+      {/* Alternative: manual */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-white mb-3">🔄 Альтернатива: вручную</h3>
+        <p className="text-sm text-gray-400 mb-3">
+          Если не хочешь использовать скрипт — открой вкладку «Файлы» и копируй каждый файл по отдельности.
+        </p>
+        <div className="bg-gray-950 rounded-lg p-4 font-mono text-sm">
+          <p className="text-gray-500"># Структура которую нужно создать:</p>
+          <p className="text-green-400">solution/</p>
+          <p className="text-gray-400 pl-4">├── __init__.py</p>
+          <p className="text-gray-400 pl-4">├── apply_kernels.py</p>
+          <p className="text-gray-400 pl-4">├── utils.py</p>
+          <p className="text-gray-400 pl-4">├── fused_cross_entropy.py</p>
+          <p className="text-gray-400 pl-4">├── fused_rmsnorm_silu.py</p>
+          <p className="text-gray-400 pl-4">├── fused_lora.py</p>
+          <p className="text-gray-400 pl-4">├── fused_embedding.py</p>
+          <p className="text-gray-400 pl-4">└── fused_rope.py</p>
+          <p className="text-green-400">tests/</p>
+          <p className="text-gray-400 pl-4">└── test_kernels.py</p>
+          <p className="text-green-400">task/</p>
+          <p className="text-gray-400 pl-4">└── task.yaml</p>
+          <p className="text-yellow-400">README.md</p>
+          <p className="text-yellow-400">SUBMISSION.md</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Step({ num, title, children }: { num: number; title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-4">
+      <div className="w-8 h-8 rounded-full bg-orange-600 flex items-center justify-center text-sm font-bold shrink-0">
+        {num}
+      </div>
+      <div className="flex-1">
+        <p className="text-sm font-medium text-white mb-1">{title}</p>
+        <div className="space-y-1">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+function Code({ children }: { children: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard.writeText(children)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <div className="flex items-center gap-2 group">
+      <code className="text-xs text-green-400 bg-gray-950 px-2 py-1 rounded flex-1 font-mono">
+        {children}
+      </code>
+      <button
+        onClick={copy}
+        className="text-xs text-gray-500 hover:text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        {copied ? '✓' : '📋'}
+      </button>
+    </div>
+  )
+}
+
+function OverviewTab() {
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <MetricCard label="Базовое время" value="~80 с" sub="soup train" color="orange" />
+        <MetricCard label="Память база" value="~14 ГБ" sub="из 15 ГБ" color="red" />
+        <MetricCard label="Цель: память" value="~5 ГБ" sub="как Unsloth" color="green" />
+        <MetricCard label="Токены/с" value="~900" sub="на T4" color="blue" />
+      </div>
+
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <h2 className="text-xl font-bold text-white mb-3">🎯 Суть решения</h2>
+        <p className="text-gray-300 leading-relaxed mb-4">
+          5 Triton-кернелов, которые ускоряют обучение Soup на Kaggle T4 и снижают расход памяти.
+          Подключаются одной функцией <code className="text-orange-400 bg-gray-800 px-1 rounded">apply()</code>.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <KernelBadge priority="🔴" name="Fused Cross-Entropy" impact="~8-10 ГБ памяти" />
+          <KernelBadge priority="🟠" name="Fused RMSNorm+SiLU" impact="~3-5% скорости" />
+          <KernelBadge priority="🟠" name="Fused LoRA" impact="~2-3% скорости" />
+          <KernelBadge priority="🟡" name="Fused Embedding" impact="~1-2% скорости" />
+          <KernelBadge priority="🟡" name="Fused RoPE" impact="~1-2% скорости" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+          <h3 className="text-lg font-semibold text-white mb-3">⚙️ Настройки задачи</h3>
+          <ul className="space-y-2 text-sm text-gray-300">
+            <li className="flex justify-between"><span>Модель</span><span className="text-orange-400">Qwen2.5-1.5B</span></li>
+            <li className="flex justify-between"><span>Квантизация</span><span className="text-orange-400">NF4 (4-bit)</span></li>
+            <li className="flex justify-between"><span>LoRA</span><span className="text-orange-400">r=16, α=32</span></li>
+            <li className="flex justify-between"><span>Targets</span><span className="text-orange-400">q_proj, v_proj</span></li>
+            <li className="flex justify-between"><span>Batch / Seq</span><span className="text-orange-400">4 / 512</span></li>
+            <li className="flex justify-between"><span>Шаги</span><span className="text-orange-400">64 (1 эпоха)</span></li>
+            <li className="flex justify-between"><span>Словарь</span><span className="text-orange-400">152K токенов</span></li>
+          </ul>
+        </div>
+
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+          <h3 className="text-lg font-semibold text-white mb-3">🏆 Баллы</h3>
+          <ul className="space-y-2 text-sm text-gray-300">
+            <li className="flex justify-between"><span>Работает и правильно</span><span className="text-green-400 font-bold">20</span></li>
+            <li className="flex justify-between"><span>Скорость (35 max)</span><span className="text-green-400 font-bold">35</span></li>
+            <li className="flex justify-between"><span>Память (30 max)</span><span className="text-green-400 font-bold">30</span></li>
+            <li className="flex justify-between"><span>README</span><span className="text-green-400 font-bold">15</span></li>
+            <li className="border-t border-gray-700 pt-2 flex justify-between font-bold"><span>Итого</span><span className="text-white">100</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MetricCard({ label, value, sub, color }: { label: string; value: string; sub: string; color: string }) {
+  const colors: Record<string, string> = {
+    orange: 'from-orange-600/20 to-orange-900/20 border-orange-800/50',
+    red: 'from-red-600/20 to-red-900/20 border-red-800/50',
+    green: 'from-green-600/20 to-green-900/20 border-green-800/50',
+    blue: 'from-blue-600/20 to-blue-900/20 border-blue-800/50',
+  }
+  const textColors: Record<string, string> = {
+    orange: 'text-orange-400', red: 'text-red-400', green: 'text-green-400', blue: 'text-blue-400',
+  }
+  return (
+    <div className={`bg-gradient-to-br ${colors[color]} border rounded-xl p-4`}>
+      <p className="text-xs text-gray-400 uppercase tracking-wide">{label}</p>
+      <p className={`text-2xl font-bold ${textColors[color]} mt-1`}>{value}</p>
+      <p className="text-xs text-gray-500 mt-1">{sub}</p>
+    </div>
+  )
+}
+
+function KernelBadge({ priority, name, impact }: { priority: string; name: string; impact: string }) {
+  return (
+    <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
+      <div className="flex items-center gap-2 mb-1">
+        <span>{priority}</span>
+        <span className="text-sm font-medium text-white">{name}</span>
+      </div>
+      <p className="text-xs text-gray-400">{impact}</p>
+    </div>
+  )
+}
+
+function FilesTab() {
+  const files = [
     {
-      name: 'solution/',
-      path: 'solution',
-      type: 'folder',
-      children: [
-        {
-          name: '__init__.py',
-          path: 'solution/__init__.py',
-          type: 'file',
-          language: 'python',
-          description: 'Точка входа — экспортирует apply()',
-          content: `"""
+      path: 'solution/__init__.py',
+      desc: 'Точка входа — экспортирует apply()',
+      content: `"""
 Soup Kernel Challenge — Decentrathon 6.0
 Custom Triton kernels for accelerating Soup training on Kaggle T4.
 
@@ -44,14 +358,11 @@ __version__ = "1.0.0"
 from .apply_kernels import apply
 
 __all__ = ["apply"]`
-        },
-        {
-          name: 'apply_kernels.py',
-          path: 'solution/apply_kernels.py',
-          type: 'file',
-          language: 'python',
-          description: 'Функция apply() — подключает все кернелы к Soup',
-          content: `"""
+    },
+    {
+      path: 'solution/apply_kernels.py',
+      desc: 'Функция apply() — подключает все кернелы к Soup',
+      content: `"""
 apply_kernels.py — Подключает все Triton-кернелы к Soup.
 """
 
@@ -118,22 +429,83 @@ def apply():
     print("=" * 60)
     print("  All kernels applied. Ready for training.")
     print("=" * 60)`
-        },
-        {
-          name: 'fused_cross_entropy.py',
-          path: 'solution/fused_cross_entropy.py',
-          type: 'file',
-          language: 'python',
-          description: '🔴 Fused CE — главный выигрыш по памяти (~8-10 ГБ)',
-          content: `"""
-fused_cross_entropy.py — Fused Cross-Entropy with online log-sum-exp.
+    },
+    {
+      path: 'solution/utils.py',
+      desc: 'Утилиты: CUDA-таймер, хелперы',
+      content: `"""
+utils.py — Kernel timing via CUDA events, autotune helpers.
+"""
 
+import torch
+from contextlib import contextmanager
+from typing import Optional
+
+
+class KernelTimer:
+    """Accumulates GPU time in custom Triton kernels via CUDA events."""
+
+    def __init__(self):
+        self._records: dict[str, list[float]] = {}
+
+    @contextmanager
+    def record(self, key: str):
+        if not torch.cuda.is_available():
+            yield
+            return
+
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        start.record()
+        try:
+            yield
+        finally:
+            end.record()
+            torch.cuda.synchronize()
+            elapsed_ms = start.elapsed_time(end)
+            self._records.setdefault(key, []).append(elapsed_ms)
+
+    def total_ms(self, key: Optional[str] = None) -> float:
+        if key:
+            return sum(self._records.get(key, []))
+        return sum(sum(v) for v in self._records.values())
+
+    def summary(self) -> str:
+        lines = ["--- Kernel Timing ---"]
+        total = 0.0
+        for key, times in sorted(self._records.items()):
+            s = sum(times)
+            total += s
+            lines.append(f"  {key:30s}  {s:8.2f} ms  ({len(times)} calls)")
+        lines.append(f"  {'TOTAL':30s}  {total:8.2f} ms")
+        return "\\n".join(lines)
+
+    def reset(self):
+        self._records.clear()
+
+
+TIMER = KernelTimer()
+
+
+def next_power_of_2(n: int) -> int:
+    p = 1
+    while p < n:
+        p <<= 1
+    return p`
+    },
+    {
+      path: 'solution/fused_cross_entropy.py',
+      desc: '🔴 Fused CE — главный выигрыш по памяти (~8-10 ГБ)',
+      content: `"""
+fused_cross_entropy.py — Fused Cross-Entropy with online log-sum-exp.
 Не материализует logits [B*S, 152K] для softmax.
-Считает loss чанками по словарю.
+Экономия: ~8-10 ГБ памяти (как Unsloth).
 """
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import triton
 import triton.language as tl
 from .utils import TIMER
@@ -141,9 +513,7 @@ from .utils import TIMER
 
 @triton.jit
 def _fused_ce_forward_kernel(
-    logits_ptr,       # [N, V]
-    labels_ptr,       # [N]
-    loss_ptr,         # [N] output
+    logits_ptr, labels_ptr, loss_ptr,
     N, V,
     stride_ln, stride_lv,
     BLOCK_V: tl.constexpr,
@@ -152,12 +522,12 @@ def _fused_ce_forward_kernel(
     pid = tl.program_id(0)
     if pid >= N:
         return
-    
+
     label = tl.load(labels_ptr + pid)
     if label == IGNORE_INDEX:
         tl.store(loss_ptr + pid, 0.0)
         return
-    
+
     # Pass 1: find max logit (numerical stability)
     max_logit = float('-inf')
     for v_start in range(0, V, BLOCK_V):
@@ -168,13 +538,13 @@ def _fused_ce_forward_kernel(
             mask=mask, other=float('-inf'),
         )
         max_logit = tl.maximum(max_logit, tl.max(logits, axis=0))
-    
+
     # Pass 2: sum(exp(logit - max)) + load target logit
     sum_exp = 0.0
     target_logit = tl.load(
         logits_ptr + pid * stride_ln + label * stride_lv
     )
-    
+
     for v_start in range(0, V, BLOCK_V):
         v_offsets = v_start + tl.arange(0, BLOCK_V)
         mask = v_offsets < V
@@ -183,31 +553,83 @@ def _fused_ce_forward_kernel(
             mask=mask, other=float('-inf'),
         )
         sum_exp += tl.sum(tl.exp(logits - max_logit), axis=0)
-    
+
     # loss = log(sum_exp) + max - target
     loss = max_logit + tl.log(sum_exp) - target_logit
     tl.store(loss_ptr + pid, loss)
 
 
-class FusedCrossEntropyLoss(nn.Module):
-    """Drop-in replacement for nn.CrossEntropyLoss."""
-    
-    def __init__(self, ignore_index: int = -100):
-        super().__init__()
-        self.ignore_index = ignore_index
-    
-    def forward(self, logits, labels):
-        if logits.dim() == 3:
-            B, S, V = logits.shape
-            logits = logits.view(-1, V)
-            labels = labels.view(-1)
-        
+@triton.jit
+def _fused_ce_backward_kernel(
+    logits_ptr, labels_ptr, grad_ptr,
+    N, V,
+    stride_ln, stride_lv,
+    BLOCK_V: tl.constexpr,
+    IGNORE_INDEX: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    if pid >= N:
+        return
+
+    label = tl.load(labels_ptr + pid)
+    if label == IGNORE_INDEX:
+        for v_start in range(0, V, BLOCK_V):
+            v_offsets = v_start + tl.arange(0, BLOCK_V)
+            mask = v_offsets < V
+            tl.store(
+                grad_ptr + pid * stride_ln + v_offsets * stride_lv,
+                tl.zeros([BLOCK_V], dtype=tl.float32),
+                mask=mask,
+            )
+        return
+
+    # Recompute max and sum_exp
+    max_logit = float('-inf')
+    for v_start in range(0, V, BLOCK_V):
+        v_offsets = v_start + tl.arange(0, BLOCK_V)
+        mask = v_offsets < V
+        logits = tl.load(
+            logits_ptr + pid * stride_ln + v_offsets * stride_lv,
+            mask=mask, other=float('-inf'),
+        )
+        max_logit = tl.maximum(max_logit, tl.max(logits, axis=0))
+
+    sum_exp = 0.0
+    for v_start in range(0, V, BLOCK_V):
+        v_offsets = v_start + tl.arange(0, BLOCK_V)
+        mask = v_offsets < V
+        logits = tl.load(
+            logits_ptr + pid * stride_ln + v_offsets * stride_lv,
+            mask=mask, other=float('-inf'),
+        )
+        sum_exp += tl.sum(tl.exp(logits - max_logit), axis=0)
+
+    # Write softmax - one_hot
+    for v_start in range(0, V, BLOCK_V):
+        v_offsets = v_start + tl.arange(0, BLOCK_V)
+        mask = v_offsets < V
+        logits = tl.load(
+            logits_ptr + pid * stride_ln + v_offsets * stride_lv,
+            mask=mask, other=float('-inf'),
+        )
+        softmax_val = tl.exp(logits - max_logit) / sum_exp
+        is_label = (v_offsets == label).to(tl.float32)
+        grad_val = softmax_val - is_label
+        tl.store(
+            grad_ptr + pid * stride_ln + v_offsets * stride_lv,
+            grad_val, mask=mask,
+        )
+
+
+class FusedCrossEntropyFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, logits, labels, ignore_index=-100):
         N, V = logits.shape
-        logits_f32 = logits.float()
+        logits_f32 = logits.float() if logits.dtype == torch.float16 else logits
+
         per_token_loss = torch.empty(N, device=logits.device, dtype=torch.float32)
-        
         BLOCK_V = min(4096, triton.next_power_of_2(V))
-        
+
         with TIMER.record("fused_ce_forward"):
             grid = (N,)
             _fused_ce_forward_kernel[grid](
@@ -215,13 +637,54 @@ class FusedCrossEntropyLoss(nn.Module):
                 N, V,
                 logits_f32.stride(0), logits_f32.stride(1),
                 BLOCK_V=BLOCK_V,
-                IGNORE_INDEX=self.ignore_index,
+                IGNORE_INDEX=ignore_index,
             )
-        
-        valid_mask = labels != self.ignore_index
-        n_valid = valid_mask.sum()
-        loss = per_token_loss.sum() / n_valid.clamp(min=1)
+
+        valid_mask = labels != ignore_index
+        n_valid = valid_mask.sum().item()
+        loss = per_token_loss.sum() / max(n_valid, 1)
+
+        ctx.save_for_backward(logits_f32, labels)
+        ctx.ignore_index = ignore_index
+        ctx.n_valid = n_valid
         return loss
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        logits_f32, labels = ctx.saved_tensors
+        N, V = logits_f32.shape
+
+        grad_logits = torch.empty_like(logits_f32)
+        BLOCK_V = min(4096, triton.next_power_of_2(V))
+
+        with TIMER.record("fused_ce_backward"):
+            grid = (N,)
+            _fused_ce_backward_kernel[grid](
+                logits_f32, labels, grad_logits,
+                N, V,
+                logits_f32.stride(0), logits_f32.stride(1),
+                BLOCK_V=BLOCK_V,
+                IGNORE_INDEX=ctx.ignore_index,
+            )
+
+        if ctx.n_valid > 0:
+            grad_logits *= grad_output / ctx.n_valid
+        return grad_logits, None, None
+
+
+class FusedCrossEntropyLoss(nn.Module):
+    """Drop-in replacement for nn.CrossEntropyLoss."""
+
+    def __init__(self, ignore_index: int = -100):
+        super().__init__()
+        self.ignore_index = ignore_index
+
+    def forward(self, logits, labels):
+        if logits.dim() == 3:
+            B, S, V = logits.shape
+            logits = logits.reshape(-1, V)
+            labels = labels.reshape(-1)
+        return FusedCrossEntropyFunction.apply(logits, labels, self.ignore_index)
 
 
 def patch_cross_entropy():
@@ -229,28 +692,25 @@ def patch_cross_entropy():
     try:
         from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM
         _orig = Qwen2ForCausalLM.forward
-        
+
         def patched(self, *args, **kwargs):
             outputs = _orig(self, *args, **kwargs)
-            if kwargs.get('labels') is not None:
+            if kwargs.get('labels') is not None and outputs.loss is not None:
                 logits = outputs.logits
                 labels = kwargs['labels']
                 shift_logits = logits[..., :-1, :].contiguous()
                 shift_labels = labels[..., 1:].contiguous()
                 outputs.loss = FusedCrossEntropyLoss()(shift_logits, shift_labels)
             return outputs
-        
+
         Qwen2ForCausalLM.forward = patched
     except (ImportError, AttributeError):
         pass`
-        },
-        {
-          name: 'fused_rmsnorm_silu.py',
-          path: 'solution/fused_rmsnorm_silu.py',
-          type: 'file',
-          language: 'python',
-          description: '🟠 Fused RMSNorm + SiLU — слияние norm + activation',
-          content: `"""
+    },
+    {
+      path: 'solution/fused_rmsnorm_silu.py',
+      desc: '🟠 Fused RMSNorm + SiLU — слияние norm + activation',
+      content: `"""
 fused_rmsnorm_silu.py — Fused RMSNorm + SiLU in one kernel.
 """
 
@@ -270,20 +730,20 @@ def _fused_rmsnorm_silu_kernel(
     row = tl.program_id(0)
     if row >= N:
         return
-    
+
     offsets = tl.arange(0, D)
     x = tl.load(x_ptr + row * stride_xn + offsets).to(tl.float32)
-    
+
     # RMSNorm
     mean_sq = tl.sum(x * x, axis=0) / D
     rms_inv = tl.rsqrt(mean_sq + eps)
     w = tl.load(weight_ptr + offsets).to(tl.float32)
     normed = x * rms_inv * w
-    
+
     # SiLU
     sigmoid_val = 1.0 / (1.0 + tl.exp(-normed))
     result = normed * sigmoid_val
-    
+
     tl.store(out_ptr + row * stride_xn + offsets, result.to(tl.float16))
 
 
@@ -293,10 +753,10 @@ def fused_rmsnorm_silu(x, weight, eps=1e-6):
     D = x.shape[-1]
     x_2d = x.reshape(-1, D)
     N = x_2d.shape[0]
-    
+
     out = torch.empty_like(x_2d)
     D_pow2 = triton.next_power_of_2(D)
-    
+
     with TIMER.record("fused_rmsnorm_silu"):
         grid = (N,)
         _fused_rmsnorm_silu_kernel[grid](
@@ -304,22 +764,17 @@ def fused_rmsnorm_silu(x, weight, eps=1e-6):
             x_2d.stride(0), N,
             D=D_pow2, eps=eps,
         )
-    
+
     return out.reshape(orig_shape)
 
 
 def patch_rmsnorm_silu():
-    """Patch Qwen2 MLP to use fused norm+activation."""
-    # The kernel is available for direct calls
-    pass`
-        },
-        {
-          name: 'fused_lora.py',
-          path: 'solution/fused_lora.py',
-          type: 'file',
-          language: 'python',
-          description: '🟠 Fused LoRA — base + scaling*(x@A@B) в одном кернеле',
-          content: `"""
+    pass  # Kernel available for direct calls`
+    },
+    {
+      path: 'solution/fused_lora.py',
+      desc: '🟠 Fused LoRA — base + scaling*(x@A@B) в одном кернеле',
+      content: `"""
 fused_lora.py — Fused LoRA: base + scaling * (x @ A @ B).
 """
 
@@ -344,33 +799,29 @@ def _fused_lora_kernel(
 ):
     pid_m = tl.program_id(0)
     pid_n = tl.program_id(1)
-    
+
     m_off = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
     n_off = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     m_mask = m_off < M
     n_mask = n_off < N
-    
-    # Load base
+
     base = tl.load(
         base_ptr + m_off[:, None] * stride_bm + n_off[None, :] * stride_bn,
         mask=m_mask[:, None] & n_mask[None, :], other=0.0,
     ).to(tl.float32)
-    
-    # Compute x @ A @ B
+
     lora_acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-    
+
     for r_start in range(0, R, BLOCK_R):
         r_off = r_start + tl.arange(0, BLOCK_R)
         r_mask = r_off < R
-        
-        # x @ A -> [M, R]
+
         xa = tl.zeros((BLOCK_M, BLOCK_R), dtype=tl.float32)
         for k in range(K):
             x_col = tl.load(x_ptr + m_off * stride_xm + k * stride_xk, mask=m_mask, other=0.0)
             a_row = tl.load(lora_a_ptr + r_off * stride_am + k * stride_ak, mask=r_mask, other=0.0)
             xa += x_col[:, None] * a_row[None, :]
-        
-        # (x@A) @ B -> [M, N]
+
         for ri in range(BLOCK_R):
             if r_start + ri >= R:
                 break
@@ -379,7 +830,7 @@ def _fused_lora_kernel(
                 mask=n_mask, other=0.0,
             )
             lora_acc += xa[:, ri:ri+1] * b_col[None, :]
-    
+
     result = base + scaling * lora_acc
     tl.store(
         out_ptr + m_off[:, None] * stride_bm + n_off[None, :] * stride_bn,
@@ -393,12 +844,12 @@ def fused_lora_forward(base_output, x, lora_A, lora_B, scaling):
     M, K = x.shape
     R = lora_A.shape[0]
     N = lora_B.shape[0]
-    
+
     out = torch.empty((M, N), device=x.device, dtype=torch.float16)
     BLOCK_M = min(64, triton.next_power_of_2(M))
     BLOCK_N = min(64, triton.next_power_of_2(N))
     BLOCK_R = min(16, triton.next_power_of_2(R))
-    
+
     with TIMER.record("fused_lora"):
         grid = (triton.cdiv(M, BLOCK_M), triton.cdiv(N, BLOCK_N))
         _fused_lora_kernel[grid](
@@ -415,15 +866,12 @@ def fused_lora_forward(base_output, x, lora_A, lora_B, scaling):
 
 
 def patch_lora():
-    pass  # Available for direct integration`
-        },
-        {
-          name: 'fused_embedding.py',
-          path: 'solution/fused_embedding.py',
-          type: 'file',
-          language: 'python',
-          description: '🟡 Fused Embedding lookup + fp16 cast',
-          content: `"""
+    pass`
+    },
+    {
+      path: 'solution/fused_embedding.py',
+      desc: '🟡 Fused Embedding lookup + fp16 cast',
+      content: `"""
 fused_embedding.py — Embedding lookup + cast to fp16 in one kernel.
 """
 
@@ -443,13 +891,13 @@ def _fused_embedding_cast_kernel(
     token_idx = tl.program_id(0)
     if token_idx >= N:
         return
-    
+
     token_id = tl.load(ids_ptr + token_idx)
     if token_id < 0 or token_id >= VOCAB_SIZE:
         offsets = tl.arange(0, D)
         tl.store(out_ptr + token_idx * D + offsets, tl.zeros([D], dtype=tl.float16))
         return
-    
+
     offsets = tl.arange(0, D)
     emb = tl.load(weight_ptr + token_id * D + offsets)
     tl.store(out_ptr + token_idx * D + offsets, emb.to(tl.float16))
@@ -461,30 +909,27 @@ def fused_embedding_lookup(weight, ids, scale=None):
     ids_flat = ids.reshape(-1)
     N = ids_flat.shape[0]
     V, D = weight.shape
-    
+
     out = torch.empty((N, D), device=weight.device, dtype=torch.float16)
     D_pow2 = triton.next_power_of_2(D)
-    
+
     with TIMER.record("fused_embedding"):
         grid = (N,)
         _fused_embedding_cast_kernel[grid](
             weight, ids_flat, out,
             N, D=D_pow2, VOCAB_SIZE=V,
         )
-    
+
     return out.reshape(*orig_shape, D)
 
 
 def patch_embedding():
-    pass  # Available for direct calls`
-        },
-        {
-          name: 'fused_rope.py',
-          path: 'solution/fused_rope.py',
-          type: 'file',
-          language: 'python',
-          description: '🟡 Fused RoPE — rotary embedding для Q и K',
-          content: `"""
+    pass`
+    },
+    {
+      path: 'solution/fused_rope.py',
+      desc: '🟡 Fused RoPE — rotary embedding для Q и K',
+      content: `"""
 fused_rope.py — Fused Rotary Position Embedding for Q and K.
 """
 
@@ -509,28 +954,28 @@ def _fused_rope_kernel(
 ):
     pid_t = tl.program_id(0)
     pid_h = tl.program_id(1)
-    
+
     d_offsets = tl.arange(0, BLOCK_D)
     d_mask = d_offsets < HALF_D
-    
-    pos = pid_t  # assume sequential positions
-    
+
+    pos = pid_t
+
     cos_vals = tl.load(cos_ptr + pos * stride_cos_pos + d_offsets, mask=d_mask, other=0.0)
     sin_vals = tl.load(sin_ptr + pos * stride_cos_pos + d_offsets, mask=d_mask, other=0.0)
-    
+
     # Q rotation
     q_base = pid_t * stride_qt + pid_h * stride_qh
     q1 = tl.load(q_ptr + q_base + d_offsets, mask=d_mask, other=0.0).to(tl.float32)
     q2 = tl.load(q_ptr + q_base + HALF_D + d_offsets, mask=d_mask, other=0.0).to(tl.float32)
-    
+
     tl.store(q_out_ptr + q_base + d_offsets, (q1 * cos_vals - q2 * sin_vals).to(tl.float16), mask=d_mask)
     tl.store(q_out_ptr + q_base + HALF_D + d_offsets, (q1 * sin_vals + q2 * cos_vals).to(tl.float16), mask=d_mask)
-    
+
     # K rotation
     k_base = pid_t * stride_kt + pid_h * stride_kh
     k1 = tl.load(k_ptr + k_base + d_offsets, mask=d_mask, other=0.0).to(tl.float32)
     k2 = tl.load(k_ptr + k_base + HALF_D + d_offsets, mask=d_mask, other=0.0).to(tl.float32)
-    
+
     tl.store(k_out_ptr + k_base + d_offsets, (k1 * cos_vals - k2 * sin_vals).to(tl.float16), mask=d_mask)
     tl.store(k_out_ptr + k_base + HALF_D + d_offsets, (k1 * sin_vals + k2 * cos_vals).to(tl.float16), mask=d_mask)
 
@@ -546,16 +991,16 @@ def fused_apply_rotary_pos_emb(q, k, cos, sin, position_ids=None):
         total, H, D = q.shape
         q_flat = q
         k_flat = k
-    
+
     HALF_D = D // 2
     q_out = torch.empty_like(q_flat)
     k_out = torch.empty_like(k_flat)
-    
+
     cos_flat = cos.reshape(-1, HALF_D) if cos.dim() == 3 else cos
     sin_flat = sin.reshape(-1, HALF_D) if sin.dim() == 3 else sin
-    
+
     BLOCK_D = triton.next_power_of_2(HALF_D)
-    
+
     with TIMER.record("fused_rope"):
         grid = (total, H)
         _fused_rope_kernel[grid](
@@ -566,11 +1011,11 @@ def fused_apply_rotary_pos_emb(q, k, cos, sin, position_ids=None):
             cos_flat.stride(0),
             H, D=D, HALF_D=HALF_D, BLOCK_D=BLOCK_D,
         )
-    
+
     if q.dim() == 4:
         q_out = q_out.reshape(B, H, S, D)
         k_out = k_out.reshape(B, H, S, D)
-    
+
     return q_out, k_out
 
 
@@ -581,561 +1026,68 @@ def patch_rope():
         qwen2_mod.apply_rotary_pos_emb = fused_apply_rotary_pos_emb
     except (ImportError, AttributeError):
         pass`
-        },
-        {
-          name: 'utils.py',
-          path: 'solution/utils.py',
-          type: 'file',
-          language: 'python',
-          description: 'Утилиты: CUDA-таймер, хелперы',
-          content: `"""
-utils.py — Kernel timing via CUDA events, autotune helpers.
-"""
-
-import torch
-from contextlib import contextmanager
-from typing import Optional
-
-
-class KernelTimer:
-    """Accumulates GPU time in custom Triton kernels via CUDA events."""
-    
-    def __init__(self):
-        self._records: dict[str, list[float]] = {}
-    
-    @contextmanager
-    def record(self, key: str):
-        if not torch.cuda.is_available():
-            yield
-            return
-        
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        
-        start.record()
-        try:
-            yield
-        finally:
-            end.record()
-            torch.cuda.synchronize()
-            elapsed_ms = start.elapsed_time(end)
-            self._records.setdefault(key, []).append(elapsed_ms)
-    
-    def total_ms(self, key: Optional[str] = None) -> float:
-        if key:
-            return sum(self._records.get(key, []))
-        return sum(sum(v) for v in self._records.values())
-    
-    def summary(self) -> str:
-        lines = ["--- Kernel Timing ---"]
-        total = 0.0
-        for key, times in sorted(self._records.items()):
-            s = sum(times)
-            total += s
-            lines.append(f"  {key:30s}  {s:8.2f} ms  ({len(times)} calls)")
-        lines.append(f"  {'TOTAL':30s}  {total:8.2f} ms")
-        return "\\n".join(lines)
-    
-    def reset(self):
-        self._records.clear()
-
-
-TIMER = KernelTimer()
-
-
-def next_power_of_2(n: int) -> int:
-    p = 1
-    while p < n:
-        p <<= 1
-    return p`
-        },
-      ],
     },
-    {
-      name: 'tests/',
-      path: 'tests',
-      type: 'folder',
-      children: [
-        {
-          name: 'test_kernels.py',
-          path: 'tests/test_kernels.py',
-          type: 'file',
-          language: 'python',
-          description: 'Юнит-тесты всех кернелов',
-          content: `"""
-test_kernels.py — Unit tests for all Triton kernels.
-Run: python -m pytest tests/test_kernels.py -v
-"""
-
-import torch
-import torch.nn.functional as F
-import pytest
-
-
-@pytest.fixture
-def device():
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-    return torch.device("cuda")
-
-
-class TestFusedCrossEntropy:
-    def test_forward_matches_pytorch(self, device):
-        from solution.fused_cross_entropy import FusedCrossEntropyLoss
-        
-        N, V = 128, 1000
-        logits = torch.randn(N, V, device=device, dtype=torch.float32)
-        labels = torch.randint(0, V, (N,), device=device)
-        
-        ref = F.cross_entropy(logits, labels)
-        fused = FusedCrossEntropyLoss()(logits, labels)
-        
-        torch.testing.assert_close(fused, ref, rtol=1e-3, atol=1e-3)
-    
-    def test_large_vocab(self, device):
-        from solution.fused_cross_entropy import FusedCrossEntropyLoss
-        
-        N, V = 32, 152000  # realistic Qwen2 vocab
-        logits = torch.randn(N, V, device=device, dtype=torch.float16)
-        labels = torch.randint(0, V, (N,), device=device)
-        
-        loss = FusedCrossEntropyLoss()(logits, labels)
-        assert not torch.isnan(loss)
-        assert loss > 0
-
-
-class TestFusedRMSNormSiLU:
-    def test_forward(self, device):
-        from solution.fused_rmsnorm_silu import fused_rmsnorm_silu
-        
-        N, D = 32, 1536
-        x = torch.randn(N, D, device=device, dtype=torch.float16)
-        w = torch.randn(D, device=device, dtype=torch.float16)
-        
-        out = fused_rmsnorm_silu(x, w)
-        assert out.shape == (N, D)
-        assert out.dtype == torch.float16
-
-
-class TestFusedEmbedding:
-    def test_matches_torch(self, device):
-        from solution.fused_embedding import fused_embedding_lookup
-        
-        V, D = 1000, 512
-        weight = torch.randn(V, D, device=device, dtype=torch.float32)
-        ids = torch.randint(0, V, (32,), device=device)
-        
-        ref = F.embedding(ids, weight).half()
-        out = fused_embedding_lookup(weight, ids)
-        
-        torch.testing.assert_close(out, ref, rtol=1e-3, atol=1e-3)`
-        },
-      ],
-    },
-    {
-      name: 'task/',
-      path: 'task',
-      type: 'folder',
-      children: [
-        {
-          name: 'task.yaml',
-          path: 'task/task.yaml',
-          type: 'file',
-          language: 'yaml',
-          description: 'Конфиг задачи (НЕ МЕНЯТЬ!)',
-          content: `# task.yaml — Soup Kernel Challenge task config
-# DO NOT MODIFY — checked by harness
-
-model:
-  name: Qwen/Qwen2.5-1.5B-Instruct
-  quantization:
-    bits: 4
-    method: nf4
-
-lora:
-  r: 16
-  alpha: 32
-  target_modules:
-    - q_proj
-    - v_proj
-  dropout: 0.0
-
-training:
-  batch_size: 4
-  max_seq_length: 512
-  num_epochs: 1
-  learning_rate: 2.0e-4
-  optimizer: adamw
-  warmup_ratio: 0.03
-
-data:
-  dataset: AmanMussa/kazakh-instruction-v2
-  format: alpaca
-  train_size: 256
-  fields:
-    - instruction
-    - input
-    - output`
-        },
-      ],
-    },
-    {
-      name: 'README.md',
-      path: 'README.md',
-      type: 'file',
-      language: 'markdown',
-      description: 'Документация решения',
-    },
-    {
-      name: 'SUBMISSION.md',
-      path: 'SUBMISSION.md',
-      type: 'file',
-      language: 'markdown',
-      description: 'Ссылки на коммит и Kaggle-ноутбук',
-    },
-  ],
-}
-
-function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('overview')
-  const [selectedFile, setSelectedFile] = useState<FileNode | null>(null)
-  const [copiedFile, setCopiedFile] = useState<string | null>(null)
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['solution', 'solution/', 'tests', 'task']))
-
-  const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: 'overview', label: 'Обзор', icon: '🎯' },
-    { id: 'files', label: 'Код проекта', icon: '📁' },
-    { id: 'profile', label: 'GPU Профиль', icon: '📊' },
-    { id: 'checklist', label: 'Чеклист', icon: '✅' },
   ]
 
-  const copyToClipboard = (text: string, path: string) => {
-    navigator.clipboard.writeText(text)
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [copiedFile, setCopiedFile] = useState<string | null>(null)
+
+  const copyFile = (content: string, path: string) => {
+    navigator.clipboard.writeText(content)
     setCopiedFile(path)
     setTimeout(() => setCopiedFile(null), 2000)
   }
 
-  const toggleFolder = (path: string) => {
-    setExpandedFolders(prev => {
-      const next = new Set(prev)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
-  }
-
-  const getAllFiles = (node: FileNode): FileNode[] => {
-    if (node.type === 'file') return [node]
-    return (node.children || []).flatMap(getAllFiles)
-  }
-
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
-      {/* Header */}
-      <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center text-xl">
-              🍲
-            </div>
-            <div>
-              <h1 className="text-lg font-bold text-white">Soup Kernel Challenge</h1>
-              <p className="text-xs text-gray-400">Decentrathon 6.0 • Triton kernels для ускорения обучения LLM</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <span className="px-2 py-1 rounded bg-green-900/50 text-green-400 border border-green-800">
-              Kaggle T4
-            </span>
-            <span className="px-2 py-1 rounded bg-blue-900/50 text-blue-400 border border-blue-800">
-              Triton 3.6
-            </span>
-            <span className="px-2 py-1 rounded bg-purple-900/50 text-purple-400 border border-purple-800">
-              fp16
-            </span>
-          </div>
-        </div>
-      </header>
-
-      {/* Navigation */}
-      <nav className="border-b border-gray-800 bg-gray-900/40">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex gap-1 overflow-x-auto">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
-                  activeTab === tab.id
-                    ? 'border-orange-500 text-orange-400'
-                    : 'border-transparent text-gray-400 hover:text-gray-200'
-                }`}
-              >
-                <span className="mr-1.5">{tab.icon}</span>
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </nav>
-
-      {/* Content */}
-      <main className="max-w-7xl mx-auto px-4 py-6">
-        {activeTab === 'overview' && <OverviewTab />}
-        {activeTab === 'files' && (
-          <FilesTab
-            tree={projectTree}
-            selectedFile={selectedFile}
-            setSelectedFile={setSelectedFile}
-            expandedFolders={expandedFolders}
-            toggleFolder={toggleFolder}
-            copyToClipboard={copyToClipboard}
-            copiedFile={copiedFile}
-          />
-        )}
-        {activeTab === 'profile' && <ProfileTab />}
-        {activeTab === 'checklist' && <ChecklistTab />}
-      </main>
-    </div>
-  )
-}
-
-function OverviewTab() {
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <MetricCard label="Базовое время" value="~80 с" sub="soup train" color="orange" />
-        <MetricCard label="Память база" value="~14 ГБ" sub="из 15 ГБ" color="red" />
-        <MetricCard label="Цель: память" value="~5 ГБ" sub="как Unsloth" color="green" />
-        <MetricCard label="Токены/с" value="~900" sub="на T4" color="blue" />
-      </div>
-
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-        <h2 className="text-xl font-bold text-white mb-3">🎯 Суть решения</h2>
-        <p className="text-gray-300 leading-relaxed mb-4">
-          5 Triton-кернелов, которые ускоряют обучение Soup на Kaggle T4 и снижают расход памяти.
-          Подключаются одной функцией <code className="text-orange-400 bg-gray-800 px-1 rounded">apply()</code>.
+    <div className="space-y-3">
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+        <p className="text-sm text-gray-400">
+          📁 Все файлы решения. Нажми на файл чтобы раскрыть, потом «Копировать» чтобы скопировать содержимое.
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          <KernelBadge priority="🔴" name="Fused Cross-Entropy" impact="~8-10 ГБ памяти" />
-          <KernelBadge priority="🟠" name="Fused RMSNorm+SiLU" impact="~3-5% скорости" />
-          <KernelBadge priority="🟠" name="Fused LoRA" impact="~2-3% скорости" />
-          <KernelBadge priority="🟡" name="Fused Embedding" impact="~1-2% скорости" />
-          <KernelBadge priority="🟡" name="Fused RoPE" impact="~1-2% скорости" />
-        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-          <h3 className="text-lg font-semibold text-white mb-3">⚙️ Настройки задачи</h3>
-          <ul className="space-y-2 text-sm text-gray-300">
-            <li className="flex justify-between"><span>Модель</span><span className="text-orange-400">Qwen2.5-1.5B</span></li>
-            <li className="flex justify-between"><span>Квантизация</span><span className="text-orange-400">NF4 (4-bit)</span></li>
-            <li className="flex justify-between"><span>LoRA</span><span className="text-orange-400">r=16, α=32</span></li>
-            <li className="flex justify-between"><span>Targets</span><span className="text-orange-400">q_proj, v_proj</span></li>
-            <li className="flex justify-between"><span>Batch / Seq</span><span className="text-orange-400">4 / 512</span></li>
-            <li className="flex justify-between"><span>Шаги</span><span className="text-orange-400">64 (1 эпоха)</span></li>
-            <li className="flex justify-between"><span>Словарь</span><span className="text-orange-400">152K токенов</span></li>
-          </ul>
-        </div>
-
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-          <h3 className="text-lg font-semibold text-white mb-3">🏆 Баллы</h3>
-          <ul className="space-y-2 text-sm text-gray-300">
-            <li className="flex justify-between"><span>Работает и правильно</span><span className="text-green-400 font-bold">20</span></li>
-            <li className="flex justify-between"><span>Скорость (35 max)</span><span className="text-green-400 font-bold">35</span></li>
-            <li className="flex justify-between"><span>Память (30 max)</span><span className="text-green-400 font-bold">30</span></li>
-            <li className="flex justify-between"><span>README</span><span className="text-green-400 font-bold">15</span></li>
-            <li className="border-t border-gray-700 pt-2 flex justify-between font-bold"><span>Итого</span><span className="text-white">100</span></li>
-          </ul>
-          <div className="mt-4 p-3 bg-gray-800/50 rounded-lg">
-            <p className="text-xs text-gray-400">Формула:</p>
-            <code className="text-orange-400 text-xs">Speed = 35 × ln(s)/ln(s_лучш)</code>
-            <br />
-            <code className="text-orange-400 text-xs">Memory = 30 × ln(m)/ln(m_лучш)</code>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-white mb-3">🚀 Быстрый старт</h3>
-        <div className="bg-gray-950 rounded-lg p-4 font-mono text-sm space-y-2">
-          <p className="text-gray-500"># В Kaggle notebook:</p>
-          <p className="text-green-400">!pip install soup-cli[train]==0.77.0</p>
-          <p className="text-green-400">!git clone YOUR_REPO && cd repo</p>
-          <p className="text-gray-500"># Подключить кернелы:</p>
-          <p className="text-blue-400">from solution import apply</p>
-          <p className="text-blue-400">apply()</p>
-          <p className="text-gray-500"># Запустить обучение:</p>
-          <p className="text-green-400">!python harness/run_task.py</p>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function MetricCard({ label, value, sub, color }: { label: string; value: string; sub: string; color: string }) {
-  const colors: Record<string, string> = {
-    orange: 'from-orange-600/20 to-orange-900/20 border-orange-800/50',
-    red: 'from-red-600/20 to-red-900/20 border-red-800/50',
-    green: 'from-green-600/20 to-green-900/20 border-green-800/50',
-    blue: 'from-blue-600/20 to-blue-900/20 border-blue-800/50',
-  }
-  const textColors: Record<string, string> = {
-    orange: 'text-orange-400',
-    red: 'text-red-400',
-    green: 'text-green-400',
-    blue: 'text-blue-400',
-  }
-  return (
-    <div className={`bg-gradient-to-br ${colors[color]} border rounded-xl p-4`}>
-      <p className="text-xs text-gray-400 uppercase tracking-wide">{label}</p>
-      <p className={`text-2xl font-bold ${textColors[color]} mt-1`}>{value}</p>
-      <p className="text-xs text-gray-500 mt-1">{sub}</p>
-    </div>
-  )
-}
-
-function KernelBadge({ priority, name, impact }: { priority: string; name: string; impact: string }) {
-  return (
-    <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
-      <div className="flex items-center gap-2 mb-1">
-        <span>{priority}</span>
-        <span className="text-sm font-medium text-white">{name}</span>
-      </div>
-      <p className="text-xs text-gray-400">{impact}</p>
-    </div>
-  )
-}
-
-function FilesTab({
-  tree,
-  selectedFile,
-  setSelectedFile,
-  expandedFolders,
-  toggleFolder,
-  copyToClipboard,
-  copiedFile,
-}: {
-  tree: FileNode
-  selectedFile: FileNode | null
-  setSelectedFile: (f: FileNode | null) => void
-  expandedFolders: Set<string>
-  toggleFolder: (p: string) => void
-  copyToClipboard: (text: string, path: string) => void
-  copiedFile: string | null
-}) {
-  const renderTree = (node: FileNode, depth: number = 0) => {
-    if (node.type === 'folder') {
-      const isExpanded = expandedFolders.has(node.path)
-      return (
-        <div key={node.path}>
+      {files.map((file) => (
+        <div key={file.path} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
           <button
-            onClick={() => toggleFolder(node.path)}
-            className="flex items-center gap-1.5 w-full text-left py-1 px-2 hover:bg-gray-800/50 rounded text-sm"
-            style={{ paddingLeft: `${depth * 16 + 8}px` }}
+            onClick={() => setExpanded(expanded === file.path ? null : file.path)}
+            className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-gray-800/50"
           >
-            <span className={`text-gray-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
-            <span className="text-yellow-400">📁</span>
-            <span className="text-gray-300">{node.name}</span>
+            <div>
+              <p className="text-sm font-mono text-white">{file.path}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{file.desc}</p>
+            </div>
+            <span className={`text-gray-400 transition-transform ${expanded === file.path ? 'rotate-180' : ''}`}>▼</span>
           </button>
-          {isExpanded && node.children?.map(child => renderTree(child, depth + 1))}
-        </div>
-      )
-    }
-
-    const isSelected = selectedFile?.path === node.path
-    return (
-      <button
-        key={node.path}
-        onClick={() => setSelectedFile(node)}
-        className={`flex items-center gap-1.5 w-full text-left py-1 px-2 rounded text-sm transition-colors ${
-          isSelected ? 'bg-orange-900/30 text-orange-300' : 'hover:bg-gray-800/50 text-gray-400'
-        }`}
-        style={{ paddingLeft: `${depth * 16 + 24}px` }}
-      >
-        <span className="text-blue-400">🐍</span>
-        <span>{node.name}</span>
-      </button>
-    )
-  }
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-      {/* File tree */}
-      <div className="lg:col-span-1 bg-gray-900 border border-gray-800 rounded-xl p-3 max-h-[80vh] overflow-y-auto">
-        <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide px-2 mb-2">
-          Файлы проекта
-        </h3>
-        {tree.children?.map(child => renderTree(child, 0))}
-      </div>
-
-      {/* File content */}
-      <div className="lg:col-span-3 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        {selectedFile ? (
-          <>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 bg-gray-800/30">
-              <div>
-                <h3 className="text-sm font-semibold text-white">{selectedFile.path}</h3>
-                {selectedFile.description && (
-                  <p className="text-xs text-gray-400 mt-0.5">{selectedFile.description}</p>
-                )}
-              </div>
-              {selectedFile.content && (
+          {expanded === file.path && (
+            <div className="border-t border-gray-800">
+              <div className="flex justify-end px-4 py-2 bg-gray-800/30">
                 <button
-                  onClick={() => copyToClipboard(selectedFile.content!, selectedFile.path)}
-                  className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                    copiedFile === selectedFile.path
+                  onClick={() => copyFile(file.content, file.path)}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                    copiedFile === file.path
                       ? 'bg-green-900/50 text-green-400 border border-green-800'
                       : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
                   }`}
                 >
-                  {copiedFile === selectedFile.path ? '✓ Скопировано' : '📋 Копировать'}
+                  {copiedFile === file.path ? '✓ Скопировано' : '📋 Копировать файл'}
                 </button>
-              )}
+              </div>
+              <pre className="text-xs text-gray-300 font-mono p-4 overflow-auto max-h-96 whitespace-pre bg-gray-950">
+                {file.content}
+              </pre>
             </div>
-            {selectedFile.content ? (
-              <div className="overflow-auto max-h-[70vh]">
-                <SyntaxHighlighter
-                  language={selectedFile.language || 'text'}
-                  style={oneDark}
-                  customStyle={{
-                    margin: 0,
-                    padding: '1rem',
-                    fontSize: '0.75rem',
-                    background: 'rgb(3 7 18)',
-                    borderRadius: 0,
-                  }}
-                  showLineNumbers
-                  wrapLines
-                >
-                  {selectedFile.content}
-                </SyntaxHighlighter>
-              </div>
-            ) : (
-              <div className="p-8 text-center text-gray-500">
-                <p className="text-lg mb-2">📄 {selectedFile.name}</p>
-                <p className="text-sm">Содержимое доступно в репозитории</p>
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="p-12 text-center text-gray-500">
-            <p className="text-4xl mb-4">👈</p>
-            <p className="text-lg">Выберите файл для просмотра</p>
-            <p className="text-sm mt-2">Кликните на файл в дереве слева</p>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      ))}
     </div>
   )
 }
 
 function ProfileTab() {
   const operations = [
-    { name: 'Поэлементные + dtype casts', pct: 44, color: 'bg-orange-500', desc: 'RMSNorm, SiLU, embedding casts, LoRA add — наш главный таргет' },
+    { name: 'Поэлементные + dtype casts', pct: 44, color: 'bg-orange-500', desc: 'RMSNorm, SiLU, embedding casts, LoRA add' },
     { name: 'Матричные умножения (GEMM)', pct: 36, color: 'bg-blue-500', desc: 'QKV projections, FFN, LoRA matmul' },
-    { name: 'Softmax (vocab 152K)', pct: 7, color: 'bg-purple-500', desc: 'Cross-entropy loss — fused CE экономит память' },
+    { name: 'Softmax (vocab 152K)', pct: 7, color: 'bg-purple-500', desc: 'Cross-entropy loss' },
     { name: 'Attention', pct: 5, color: 'bg-green-500', desc: 'Scaled dot-product attention' },
     { name: 'NF4 unpack', pct: 5, color: 'bg-red-500', desc: 'Декомпрессия 4-битных весов' },
     { name: 'Прочее', pct: 3, color: 'bg-gray-500', desc: 'Memory ops, scheduling' },
@@ -1145,8 +1097,7 @@ function ProfileTab() {
     <div className="space-y-6">
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
         <h2 className="text-xl font-bold text-white mb-2">📊 Профиль шага Soup на T4</h2>
-        <p className="text-sm text-gray-400 mb-6">GPU занят ~95% времени. Распределение по операциям:</p>
-        
+        <p className="text-sm text-gray-400 mb-6">GPU занят ~95% времени:</p>
         <div className="space-y-4">
           {operations.map((op) => (
             <div key={op.name}>
@@ -1155,39 +1106,13 @@ function ProfileTab() {
                 <span className="text-sm font-mono text-gray-400">{op.pct}%</span>
               </div>
               <div className="h-8 bg-gray-800 rounded-full overflow-hidden">
-                <div
-                  className={`h-full ${op.color} rounded-full flex items-center px-3`}
-                  style={{ width: `${op.pct}%` }}
-                >
+                <div className={`h-full ${op.color} rounded-full flex items-center px-3`} style={{ width: `${op.pct}%` }}>
                   {op.pct >= 10 && <span className="text-xs font-bold text-white/80">{op.pct}%</span>}
                 </div>
               </div>
               <p className="text-xs text-gray-500 mt-1">{op.desc}</p>
             </div>
           ))}
-        </div>
-      </div>
-
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">💡 Стратегия оптимизации</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-gray-800/50 rounded-lg p-4 border border-orange-900/30">
-            <h4 className="text-sm font-semibold text-orange-400 mb-2">Приоритет 1: Память</h4>
-            <p className="text-xs text-gray-300 mb-2">Fused Cross-Entropy — не материализуем logits [B*S*152K]</p>
-            <div className="text-xs text-gray-500">
-              <p>Экономия: ~8-10 ГБ</p>
-              <p>Это как Unsloth делает — в 6× меньше памяти</p>
-            </div>
-          </div>
-          <div className="bg-gray-800/50 rounded-lg p-4 border border-orange-900/30">
-            <h4 className="text-sm font-semibold text-orange-400 mb-2">Приоритет 2: Скорость</h4>
-            <p className="text-xs text-gray-300 mb-2">Слияние 44% element-wise операций</p>
-            <div className="text-xs text-gray-500">
-              <p>RMSNorm + SiLU в одном кернеле</p>
-              <p>LoRA base + delta в одном кернеле</p>
-              <p>Embedding + cast в одном кернеле</p>
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -1242,10 +1167,7 @@ function ChecklistTab() {
           <span className="text-lg font-mono text-orange-400">{done}/{total}</span>
         </div>
         <div className="h-3 bg-gray-800 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-gradient-to-r from-orange-500 to-green-500 rounded-full transition-all"
-            style={{ width: `${(done / total) * 100}%` }}
-          />
+          <div className="h-full bg-gradient-to-r from-orange-500 to-green-500 rounded-full transition-all" style={{ width: `${(done / total) * 100}%` }} />
         </div>
       </div>
 
@@ -1254,10 +1176,7 @@ function ChecklistTab() {
           <h3 className="text-base font-semibold text-white mb-4">{section.title}</h3>
           <div className="space-y-2">
             {section.items.map((item) => (
-              <label
-                key={item.id}
-                className="flex items-start gap-3 p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer"
-              >
+              <label key={item.id} className="flex items-start gap-3 p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={checks[item.id] || false}
