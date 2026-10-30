@@ -118,6 +118,24 @@ function QuickStartTab({
           Скопируй setup-скрипт и запусти его в папке своего репозитория хакатона.
           Он создаст все файлы решения.
         </p>
+        <div className="mt-4 flex gap-3">
+          <button
+            onClick={copyScript}
+            className={`px-6 py-3 rounded-lg text-sm font-bold transition-all ${
+              copied
+                ? 'bg-green-600 text-white'
+                : 'bg-orange-600 hover:bg-orange-700 text-white'
+            }`}
+          >
+            {copied ? '✓ Скопировано!' : '📋 Скопировать setup.sh'}
+          </button>
+          <button
+            onClick={downloadScript}
+            className="px-6 py-3 rounded-lg text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            ⬇ Скачать файл
+          </button>
+        </div>
       </div>
 
       {/* Steps */}
