@@ -78,6 +78,16 @@ def apply():
     except Exception as e:
         warnings.warn(f"[!] Fused RoPE failed: {e}")
 
+    # Note: Fused NF4 MatMul (41% времени) НЕ включён автоматически.
+    # Он экспериментальный и может сломать обучение.
+    # Для включения раскомментируй строки ниже:
+    # try:
+    #     from .fused_nf4_matmul import patch_nf4_matmul
+    #     patch_nf4_matmul()
+    #     print("[✓] Fused NF4 MatMul (speed + memory) — EXPERIMENTAL")
+    # except Exception as e:
+    #     warnings.warn(f"[!] Fused NF4 MatMul failed: {e}")
+
     print("=" * 60)
     print("  All 6 kernels patched and active!")
     print("  Ready for training.")
