@@ -32,10 +32,9 @@ def _fused_rmsnorm_silu_kernel(
     out_ptr,        # [N, D] output (fp16)
     stride_xn,      # stride along N
     N,              # number of rows
-    D: tl.constexpr,         # hidden dimension
+    D: tl.constexpr,         # hidden dimension (original)
+    BLOCK_D: tl.constexpr,   # block size (power of 2)
     eps: tl.constexpr,       # RMSNorm epsilon
-    HAS_BIAS: tl.constexpr,  # whether to add bias after SiLU
-    bias_ptr,       # [D] optional bias
 ):
     """
     Fused: output = SiLU(RMSNorm(x) * weight)
@@ -48,9 +47,11 @@ def _fused_rmsnorm_silu_kernel(
         return
     
     # Load input row as fp32 for precision
-    col_offsets = tl.arange(0, D)
+    col_offsets = tl.arange(0, BLOCK_D)
+    mask = col_offsets < D
     x = tl.load(
-        x_ptr + row * stride_xn + col_offsets
+        x_ptr + row * stride_xn + col_offsets,
+        mask=mask, other=0.0
     ).to(tl.float32)
     
     # RMSNorm: compute rms
@@ -59,22 +60,18 @@ def _fused_rmsnorm_silu_kernel(
     rms_inv = tl.rsqrt(mean_sq + eps)
     
     # Normalize and scale by weight
-    w = tl.load(weight_ptr + col_offsets).to(tl.float32)
+    w = tl.load(weight_ptr + col_offsets, mask=mask, other=0.0).to(tl.float32)
     normed = x * rms_inv * w
     
     # SiLU activation: x * sigmoid(x)
     sigmoid_val = 1.0 / (1.0 + tl.exp(-normed))
     activated = normed * sigmoid_val
     
-    # Optional bias
-    if HAS_BIAS:
-        b = tl.load(bias_ptr + col_offsets).to(tl.float32)
-        activated = activated + b
-    
     # Store as fp16
     tl.store(
         out_ptr + row * stride_xn + col_offsets,
         activated.to(tl.float16),
+        mask=mask,
     )
 
 
@@ -88,21 +85,21 @@ def _fused_rmsnorm_silu_backward_kernel(
     stride_xn,
     N,
     D: tl.constexpr,
+    BLOCK_D: tl.constexpr,
     eps: tl.constexpr,
 ):
-    """
-    Backward pass for fused RMSNorm + SiLU.
-    """
+    """Backward pass for fused RMSNorm + SiLU."""
     row = tl.program_id(0)
     if row >= N:
         return
     
-    col_offsets = tl.arange(0, D)
+    col_offsets = tl.arange(0, BLOCK_D)
+    mask = col_offsets < D
     
     # Load inputs
-    x = tl.load(x_ptr + row * stride_xn + col_offsets).to(tl.float32)
-    grad_out = tl.load(grad_out_ptr + row * stride_xn + col_offsets).to(tl.float32)
-    w = tl.load(weight_ptr + col_offsets).to(tl.float32)
+    x = tl.load(x_ptr + row * stride_xn + col_offsets, mask=mask, other=0.0).to(tl.float32)
+    grad_out = tl.load(grad_out_ptr + row * stride_xn + col_offsets, mask=mask, other=0.0).to(tl.float32)
+    w = tl.load(weight_ptr + col_offsets, mask=mask, other=0.0).to(tl.float32)
     
     # Recompute forward values
     x_sq = x * x
@@ -110,7 +107,7 @@ def _fused_rmsnorm_silu_backward_kernel(
     rms_inv = tl.rsqrt(mean_sq + eps)
     normed = x * rms_inv * w
     
-    # SiLU backward: d/dx [x * sigmoid(x)] = sigmoid(x) + x * sigmoid(x) * (1 - sigmoid(x))
+    # SiLU backward
     sigmoid_val = 1.0 / (1.0 + tl.exp(-normed))
     silu_grad = sigmoid_val + normed * sigmoid_val * (1.0 - sigmoid_val)
     
@@ -118,20 +115,16 @@ def _fused_rmsnorm_silu_backward_kernel(
     grad_normed = grad_out * silu_grad
     
     # RMSNorm backward
-    # d(RMSNorm)/dx = rms_inv * (I - x^2 * mean(x^2+eps)^{-1} / D) * w
     grad_scaled = grad_normed * w
     x_grad_part = grad_scaled * rms_inv
-    
-    # Correction term: -x * mean(x * grad_scaled) * rms_inv^3 / D
     correction = tl.sum(x * grad_scaled, axis=0) * rms_inv * rms_inv * rms_inv / D
     grad_x = x_grad_part - x * correction
     
-    # Store grad_x
-    tl.store(grad_x_ptr + row * stride_xn + col_offsets, grad_x.to(tl.float16))
+    tl.store(grad_x_ptr + row * stride_xn + col_offsets, grad_x.to(tl.float16), mask=mask)
     
-    # Accumulate grad_w (atomic since multiple rows contribute)
+    # Accumulate grad_w
     grad_w = grad_normed * x * rms_inv
-    tl.atomic_add(grad_w_ptr + col_offsets, grad_w.to(tl.float32))
+    tl.atomic_add(grad_w_ptr + col_offsets, grad_w.to(tl.float32), mask=mask)
 
 
 # ---------------------------------------------------------------------------
@@ -141,58 +134,47 @@ def _fused_rmsnorm_silu_backward_kernel(
 class FusedRMSNormSiLUFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x: torch.Tensor, weight: torch.Tensor, eps: float = 1e-6):
-        N = x.shape[0]
-        D = x.shape[-1]
-        
-        # Ensure 2D
         orig_shape = x.shape
+        D = x.shape[-1]
         x_2d = x.reshape(-1, D)
         N = x_2d.shape[0]
         
         out = torch.empty_like(x_2d)
-        
-        # Round D up to power of 2 for Triton
-        D_pow2 = triton.next_power_of_2(D)
+        BLOCK_D = triton.next_power_of_2(D)
         
         with TIMER.record("fused_rmsnorm_silu"):
             grid = (N,)
             _fused_rmsnorm_silu_kernel[grid](
                 x_2d, weight, out,
-                x_2d.stride(0),
-                N,
-                D=D_pow2,
-                eps=eps,
-                HAS_BIAS=False,
-                bias_ptr=None,
+                x_2d.stride(0), N,
+                D=D, BLOCK_D=BLOCK_D, eps=eps,
             )
         
         ctx.save_for_backward(x_2d, weight)
         ctx.eps = eps
         ctx.orig_shape = orig_shape
+        ctx.D = D
+        ctx.BLOCK_D = BLOCK_D
         
         return out.reshape(orig_shape)
     
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
         x_2d, weight = ctx.saved_tensors
-        D = x_2d.shape[-1]
+        D = ctx.D
         N = x_2d.shape[0]
         
         grad_output_2d = grad_output.reshape(-1, D)
         grad_x = torch.empty_like(x_2d)
-        grad_w = torch.zeros_like(weight, dtype=torch.float32)
-        
-        D_pow2 = triton.next_power_of_2(D)
+        grad_w = torch.zeros(weight.shape[0], device=weight.device, dtype=torch.float32)
         
         with TIMER.record("fused_rmsnorm_silu_backward"):
             grid = (N,)
             _fused_rmsnorm_silu_backward_kernel[grid](
                 grad_output_2d, x_2d, weight,
                 grad_x, grad_w,
-                x_2d.stride(0),
-                N,
-                D=D_pow2,
-                eps=ctx.eps,
+                x_2d.stride(0), N,
+                D=D, BLOCK_D=ctx.BLOCK_D, eps=ctx.eps,
             )
         
         return grad_x.reshape(ctx.orig_shape), grad_w.to(weight.dtype), None
@@ -204,7 +186,25 @@ class FusedRMSNormSiLUFunction(torch.autograd.Function):
 
 def fused_rmsnorm_silu(x: torch.Tensor, weight: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     """Apply fused RMSNorm + SiLU."""
-    return FusedRMSNormSiLUFunction.apply(x, weight, eps)
+    orig_shape = x.shape
+    D = x.shape[-1]
+    x_2d = x.reshape(-1, D)
+    N = x_2d.shape[0]
+    
+    out = torch.empty_like(x_2d)
+    BLOCK_D = triton.next_power_of_2(D)
+    
+    with TIMER.record("fused_rmsnorm_silu"):
+        grid = (N,)
+        _fused_rmsnorm_silu_kernel[grid](
+            x_2d, weight, out,
+            x_2d.stride(0), N,
+            D=D,
+            BLOCK_D=BLOCK_D,
+            eps=eps,
+        )
+    
+    return out.reshape(orig_shape)
 
 
 # ---------------------------------------------------------------------------

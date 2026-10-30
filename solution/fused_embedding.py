@@ -30,80 +30,37 @@ def _fused_embedding_cast_kernel(
     ids_ptr,        # [N] token ids (int64 or int32)
     out_ptr,        # [N, D] output (fp16)
     N,              # total tokens
-    D: tl.constexpr,         # embedding dimension
+    D: tl.constexpr,         # original embedding dimension
+    BLOCK_D: tl.constexpr,   # block size (power of 2)
     VOCAB_SIZE: tl.constexpr,
-    PAD_VALUE: tl.constexpr, # value to write for pad tokens
 ):
-    """
-    Lookup embedding and cast to fp16 in one pass.
-    Each program handles one token.
-    """
-    token_idx = tl.program_id(0)
-    if token_idx >= N:
-        return
-    
-    # Load token id
-    token_id = tl.load(ids_ptr + token_idx)
-    
-    # Handle pad/invalid tokens
-    if token_id < 0 or token_id >= VOCAB_SIZE:
-        # Write zeros for invalid tokens
-        offsets = tl.arange(0, D)
-        tl.store(
-            out_ptr + token_idx * D + offsets,
-            tl.zeros([D], dtype=tl.float16),
-        )
-        return
-    
-    # Load embedding row and cast to fp16
-    offsets = tl.arange(0, D)
-    emb = tl.load(weight_ptr + token_id * D + offsets)
-    
-    # Store as fp16
-    tl.store(
-        out_ptr + token_idx * D + offsets,
-        emb.to(tl.float16),
-    )
-
-
-@triton.jit
-def _fused_embedding_scaled_kernel(
-    weight_ptr,     # [V, D] embedding weights (fp32)
-    ids_ptr,        # [N] token ids
-    out_ptr,        # [N, D] output (fp16)
-    N,
-    D: tl.constexpr,
-    VOCAB_SIZE: tl.constexpr,
-    scale: tl.constexpr,    # embedding scale factor (e.g., sqrt(D))
-):
-    """
-    Lookup + scale + cast in one kernel.
-    Some models scale embeddings by sqrt(hidden_size).
-    """
+    """Lookup embedding and cast to fp16 in one pass."""
     token_idx = tl.program_id(0)
     if token_idx >= N:
         return
     
     token_id = tl.load(ids_ptr + token_idx)
     
+    offsets = tl.arange(0, BLOCK_D)
+    mask = offsets < D
+    
     if token_id < 0 or token_id >= VOCAB_SIZE:
-        offsets = tl.arange(0, D)
         tl.store(
             out_ptr + token_idx * D + offsets,
-            tl.zeros([D], dtype=tl.float16),
+            tl.zeros([BLOCK_D], dtype=tl.float16),
+            mask=mask,
         )
         return
     
-    offsets = tl.arange(0, D)
-    emb = tl.load(weight_ptr + token_id * D + offsets).to(tl.float32)
-    
-    # Apply scale
-    emb = emb * scale
-    
+    emb = tl.load(weight_ptr + token_id * D + offsets, mask=mask, other=0.0)
     tl.store(
         out_ptr + token_idx * D + offsets,
         emb.to(tl.float16),
+        mask=mask,
     )
+
+
+# scaled version removed — use fused_embedding_lookup with post-multiply
 
 
 # ---------------------------------------------------------------------------
@@ -132,29 +89,25 @@ def fused_embedding_lookup(
     V, D = weight.shape
     
     out = torch.empty((N, D), device=weight.device, dtype=torch.float16)
-    
-    D_pow2 = triton.next_power_of_2(D)
+    BLOCK_D = triton.next_power_of_2(D)
     
     with TIMER.record("fused_embedding"):
         grid = (N,)
-        if scale is not None:
-            _fused_embedding_scaled_kernel[grid](
-                weight, ids_flat, out,
-                N,
-                D=D_pow2,
-                VOCAB_SIZE=V,
-                scale=scale,
-            )
-        else:
-            _fused_embedding_cast_kernel[grid](
-                weight, ids_flat, out,
-                N,
-                D=D_pow2,
-                VOCAB_SIZE=V,
-                PAD_VALUE=0,
-            )
+        _fused_embedding_cast_kernel[grid](
+            weight, ids_flat, out,
+            N,
+            D=D,
+            BLOCK_D=BLOCK_D,
+            VOCAB_SIZE=V,
+        )
     
-    return out.reshape(*orig_shape, D)
+    result = out.reshape(*orig_shape, D)
+    
+    # Apply scale if needed (outside kernel for simplicity)
+    if scale is not None:
+        result = result * scale
+    
+    return result
 
 
 # ---------------------------------------------------------------------------
