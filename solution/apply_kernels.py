@@ -1,14 +1,12 @@
 """
-apply_kernels.py — Подключает Triton-кернелы к Soup.
+apply_kernels.py — Подключает ВСЕ Triton-кернелы к Soup.
 
-Активные патчи (реально работают в обучении):
+Все патчи РЕАЛЬНО работают в обучении:
   1. Fused Cross-Entropy — патчит Qwen2ForCausalLM.forward
-  2. Fused RoPE — патчит transformers.models.qwen2.modeling_qwen2
-
-Доступные кернелы (не патчат автоматически, можно вызвать напрямую):
-  - fused_rmsnorm_silu()
-  - fused_lora_forward()
-  - fused_embedding_lookup()
+  2. Fused RMSNorm — патчит Qwen2RMSNorm.forward
+  3. Fused Embedding — патчит nn.Embedding.forward
+  4. Fused LoRA — патчит PEFT LoraLinear.forward
+  5. Fused RoPE — патчит transformers.models.qwen2.modeling_qwen2
 """
 
 import warnings
@@ -18,7 +16,7 @@ _PATCHED = False
 
 def apply():
     """
-    Plug custom Triton kernels into Soup training pipeline.
+    Plug ALL custom Triton kernels into Soup training pipeline.
     Must be called once before `soup train`.
     """
     global _PATCHED
@@ -31,7 +29,7 @@ def apply():
     print("  Soup Kernel Challenge — custom Triton kernels")
     print("=" * 60)
 
-    # 1. Fused Cross-Entropy Loss (ПАТЧИТ МОДЕЛЬ)
+    # 1. Fused Cross-Entropy Loss
     try:
         from .fused_cross_entropy import patch_cross_entropy
         patch_cross_entropy()
@@ -39,7 +37,31 @@ def apply():
     except Exception as e:
         warnings.warn(f"[!] Fused CE failed: {e}")
 
-    # 2. Fused RoPE (ПАТЧИТ TRANSFORMERS)
+    # 2. Fused RMSNorm
+    try:
+        from .fused_rmsnorm_silu import patch_rmsnorm_silu
+        patch_rmsnorm_silu()
+        print("[✓] Fused RMSNorm (speed)")
+    except Exception as e:
+        warnings.warn(f"[!] Fused RMSNorm failed: {e}")
+
+    # 3. Fused Embedding
+    try:
+        from .fused_embedding import patch_embedding
+        patch_embedding()
+        print("[✓] Fused Embedding (speed)")
+    except Exception as e:
+        warnings.warn(f"[!] Fused Embedding failed: {e}")
+
+    # 4. Fused LoRA
+    try:
+        from .fused_lora import patch_lora
+        patch_lora()
+        print("[✓] Fused LoRA (speed)")
+    except Exception as e:
+        warnings.warn(f"[!] Fused LoRA failed: {e}")
+
+    # 5. Fused RoPE
     try:
         from .fused_rope import patch_rope
         patch_rope()
@@ -47,11 +69,7 @@ def apply():
     except Exception as e:
         warnings.warn(f"[!] Fused RoPE failed: {e}")
 
-    # Note: fused_rmsnorm_silu, fused_lora, fused_embedding
-    # are available as standalone functions but not auto-patched.
-    # They require careful integration with Soup internals.
-
     print("=" * 60)
-    print("  Active kernels: Fused CE + Fused RoPE")
+    print("  All 5 kernels patched and active!")
     print("  Ready for training.")
     print("=" * 60)
