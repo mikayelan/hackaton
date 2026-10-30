@@ -13,7 +13,7 @@ from .utils import TIMER
 @triton.jit
 def _fused_lora_kernel(
     base_ptr, x_ptr, lora_a_ptr, lora_b_ptr, out_ptr,
-    M, N, K, R,
+    M, N, K,
     stride_bm, stride_bn,
     stride_xm, stride_xk,
     stride_ar, stride_ak,
@@ -22,10 +22,12 @@ def _fused_lora_kernel(
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_K: tl.constexpr,
+    R: tl.constexpr,  # R must be constexpr for Triton loops
 ):
     """
     out = base + scaling * (x @ A^T @ B^T)
     A is [R, K], B is [N, R]
+    R is fixed at compile time (16 for this task).
     """
     pid_m = tl.program_id(0)
     pid_n = tl.program_id(1)
@@ -94,13 +96,14 @@ def fused_lora_forward(base_output, x, lora_A, lora_B, scaling):
     with TIMER.record("fused_lora"):
         _fused_lora_kernel[(triton.cdiv(M, BLOCK_M), triton.cdiv(N, BLOCK_N))](
             base_output, x, lora_A, lora_B, out,
-            M, N, K, R,
+            M, N, K,
             base_output.stride(0), base_output.stride(1),
             x.stride(0), x.stride(1),
             lora_A.stride(0), lora_A.stride(1),
             lora_B.stride(0), lora_B.stride(1),
             scaling,
             BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
+            R=R,  # R is constexpr
         )
     return out
 
@@ -126,12 +129,18 @@ def patch_lora():
                 adapter = self.active_adapter
                 lora_A = self.lora_A[adapter].weight  # [R, K]
                 lora_B = self.lora_B[adapter].weight  # [N, R]
-                scaling = self.scaling[adapter]
+                
+                # scaling может быть dict или float
+                if isinstance(self.scaling, dict):
+                    scaling = self.scaling[adapter]
+                else:
+                    scaling = self.scaling
 
                 # Dropout если нужен
                 x_lora = x
-                if self.lora_dropout[adapter].p > 0:
-                    x_lora = self.lora_dropout[adapter](x)
+                if hasattr(self, 'lora_dropout') and adapter in self.lora_dropout:
+                    if self.lora_dropout[adapter].p > 0:
+                        x_lora = self.lora_dropout[adapter](x)
 
                 # Fused LoRA
                 if x_lora.dim() == 2:  # [M, K]

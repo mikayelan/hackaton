@@ -4,9 +4,10 @@ apply_kernels.py — Подключает ВСЕ Triton-кернелы к Soup.
 Все патчи РЕАЛЬНО работают в обучении:
   1. Fused Cross-Entropy — патчит Qwen2ForCausalLM.forward
   2. Fused RMSNorm — патчит Qwen2RMSNorm.forward
-  3. Fused Embedding — патчит nn.Embedding.forward
-  4. Fused LoRA — патчит PEFT LoraLinear.forward
-  5. Fused RoPE — патчит transformers.models.qwen2.modeling_qwen2
+  3. Fused SiLU*mul — патчит Qwen2MLP.forward
+  4. Fused Embedding — патчит nn.Embedding.forward
+  5. Fused LoRA — патчит PEFT LoraLinear.forward
+  6. Fused RoPE — патчит transformers.models.qwen2.modeling_qwen2
 """
 
 import warnings

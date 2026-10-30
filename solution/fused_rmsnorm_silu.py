@@ -33,7 +33,7 @@ def _fused_rmsnorm_kernel(
     w = tl.load(weight_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
     result = x * rms_inv * w
 
-    tl.store(out_ptr + row * stride_xn + offsets, result.to(x_ptr.dtype.element_ty), mask=mask)
+    tl.store(out_ptr + row * stride_xn + offsets, result.to(tl.float16), mask=mask)
 
 
 @triton.jit
@@ -54,7 +54,7 @@ def _fused_silu_kernel(
     sigmoid_val = 1.0 / (1.0 + tl.exp(-x))
     result = x * sigmoid_val
 
-    tl.store(out_ptr + row * stride_n + offsets, result.to(x_ptr.dtype.element_ty), mask=mask)
+    tl.store(out_ptr + row * stride_n + offsets, result.to(tl.float16), mask=mask)
 
 
 def fused_rmsnorm(x, weight, eps=1e-6):
