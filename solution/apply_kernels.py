@@ -45,7 +45,15 @@ def apply():
     except Exception as e:
         warnings.warn(f"[!] Fused RMSNorm failed: {e}")
 
-    # 3. Fused Embedding
+    # 3. Fused SiLU*mul (FFN activation)
+    try:
+        from .fused_silu_mul import patch_silu_mul
+        patch_silu_mul()
+        print("[✓] Fused SiLU*mul (speed)")
+    except Exception as e:
+        warnings.warn(f"[!] Fused SiLU*mul failed: {e}")
+
+    # 4. Fused Embedding
     try:
         from .fused_embedding import patch_embedding
         patch_embedding()
@@ -53,7 +61,7 @@ def apply():
     except Exception as e:
         warnings.warn(f"[!] Fused Embedding failed: {e}")
 
-    # 4. Fused LoRA
+    # 5. Fused LoRA
     try:
         from .fused_lora import patch_lora
         patch_lora()
@@ -61,7 +69,7 @@ def apply():
     except Exception as e:
         warnings.warn(f"[!] Fused LoRA failed: {e}")
 
-    # 5. Fused RoPE
+    # 6. Fused RoPE
     try:
         from .fused_rope import patch_rope
         patch_rope()
@@ -70,6 +78,6 @@ def apply():
         warnings.warn(f"[!] Fused RoPE failed: {e}")
 
     print("=" * 60)
-    print("  All 5 kernels patched and active!")
+    print("  All 6 kernels patched and active!")
     print("  Ready for training.")
     print("=" * 60)

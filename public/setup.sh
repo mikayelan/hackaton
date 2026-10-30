@@ -51,6 +51,13 @@ def apply():
         warnings.warn(f"[!] Fused RMSNorm failed: {e}")
 
     try:
+        from .fused_silu_mul import patch_silu_mul
+        patch_silu_mul()
+        print("[✓] Fused SiLU*mul (FFN)")
+    except Exception as e:
+        warnings.warn(f"[!] Fused SiLU*mul failed: {e}")
+
+    try:
         from .fused_embedding import patch_embedding
         patch_embedding()
         print("[✓] Fused Embedding")
@@ -72,7 +79,7 @@ def apply():
         warnings.warn(f"[!] Fused RoPE failed: {e}")
 
     print("=" * 60)
-    print("  All 5 kernels patched and active!")
+    print("  All 6 kernels patched and active!")
     print("=" * 60)
 EOF
 
@@ -570,6 +577,76 @@ def patch_lora():
         warnings.warn(f"[!] Could not patch PEFT LoraLinear: {e}")
 EOF
 
+# =================== solution/fused_silu_mul.py ===================
+cat > solution/fused_silu_mul.py << 'EOF'
+"""
+fused_silu_mul.py — Fused SiLU(x) * y в одном кернеле.
+ПАТЧИТ: Qwen2MLP.forward
+"""
+import torch
+import triton
+import triton.language as tl
+from .utils import TIMER
+
+
+@triton.jit
+def _fused_silu_mul_kernel(
+    x_ptr, y_ptr, out_ptr,
+    stride_n, N, D,
+    BLOCK_D: tl.constexpr,
+):
+    row = tl.program_id(0)
+    if row >= N:
+        return
+
+    offsets = tl.arange(0, BLOCK_D)
+    mask = offsets < D
+
+    x = tl.load(x_ptr + row * stride_n + offsets, mask=mask, other=0.0).to(tl.float32)
+    y = tl.load(y_ptr + row * stride_n + offsets, mask=mask, other=0.0).to(tl.float32)
+
+    sigmoid_x = 1.0 / (1.0 + tl.exp(-x))
+    result = x * sigmoid_x * y
+
+    tl.store(out_ptr + row * stride_n + offsets, result.to(tl.float16), mask=mask)
+
+
+def fused_silu_mul(x, y):
+    assert x.shape == y.shape
+    orig_shape = x.shape
+    D = x.shape[-1]
+    x_2d = x.reshape(-1, D)
+    y_2d = y.reshape(-1, D)
+    N = x_2d.shape[0]
+    out = torch.empty_like(x_2d)
+    BLOCK_D = triton.next_power_of_2(D)
+
+    with TIMER.record("fused_silu_mul"):
+        _fused_silu_mul_kernel[(N,)](
+            x_2d, y_2d, out,
+            x_2d.stride(0), N, D,
+            BLOCK_D=BLOCK_D,
+        )
+    return out.reshape(orig_shape)
+
+
+def patch_silu_mul():
+    """РЕАЛЬНЫЙ ПАТЧ: Qwen2MLP.forward"""
+    try:
+        from transformers.models.qwen2.modeling_qwen2 import Qwen2MLP
+
+        def patched_forward(self, x):
+            gate = self.gate_proj(x)
+            up = self.up_proj(x)
+            fused = fused_silu_mul(gate, up)
+            return self.down_proj(fused)
+
+        Qwen2MLP.forward = patched_forward
+    except (ImportError, AttributeError) as e:
+        import warnings
+        warnings.warn(f"[!] Could not patch Qwen2MLP: {e}")
+EOF
+
 # =================== solution/fused_rope.py ===================
 cat > solution/fused_rope.py << 'EOF'
 """
@@ -749,13 +826,14 @@ cat > README.md << 'EOF'
 
 ## Что сделано
 
-5 Triton-кернелов, все РЕАЛЬНО патчат Soup/transformers/PEFT:
+6 Triton-кернелов, все РЕАЛЬНО патчат Soup/transformers/PEFT:
 
 1. **Fused Cross-Entropy** — патчит `Qwen2ForCausalLM.forward`, экономит ~8-10 ГБ памяти
 2. **Fused RMSNorm** — патчит `Qwen2RMSNorm.forward`, ускоряет каждый слой
-3. **Fused Embedding** — патчит `nn.Embedding.forward`, lookup + cast в одном кернеле
-4. **Fused LoRA** — патчит `PEFT LoraLinear.forward`, base + delta в одном кернеле
-5. **Fused RoPE** — патчит `qwen2_mod.apply_rotary_pos_emb`, rotary для Q и K
+3. **Fused SiLU*mul** — патчит `Qwen2MLP.forward`, SiLU(gate)*up в одном кернеле
+4. **Fused Embedding** — патчит `nn.Embedding.forward`, lookup + cast в одном кернеле
+5. **Fused LoRA** — патчит `PEFT LoraLinear.forward`, base + delta в одном кернеле
+6. **Fused RoPE** — патчит `qwen2_mod.apply_rotary_pos_emb`, rotary для Q и K
 
 ## Как запустить
 
