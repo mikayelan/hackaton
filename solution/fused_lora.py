@@ -123,7 +123,8 @@ def patch_lora():
         def patched_forward(self, x: torch.Tensor, *args, **kwargs):
             # ИСПРАВЛЕНИЕ: вызываем base_layer(x) — это работает с квантованными весами
             # F.linear(x, self.base_layer.weight) НЕ работает с 4-bit!
-            result = self.base_layer(x, *args, **kwargs)
+            # НЕ передаём *args, **kwargs в base_layer — Linear4bit их не принимает
+            result = self.base_layer(x)
 
             # LoRA адаптер (если активен)
             active_adapter = self.active_adapter
@@ -136,8 +137,6 @@ def patch_lora():
 
             for adapter in adapters:
                 if adapter not in self.lora_A:
-                    continue
-                if adapter == "default" and not hasattr(self, 'active_adapter'):
                     continue
 
                 lora_A = self.lora_A[adapter].weight  # [R, K]

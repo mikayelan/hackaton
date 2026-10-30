@@ -39,7 +39,8 @@ def _fused_rmsnorm_kernel(
 @triton.jit
 def _fused_silu_kernel(
     x_ptr, out_ptr,
-    stride_n, N, D,
+    stride_n, N,
+    D: tl.constexpr,
     BLOCK_D: tl.constexpr,
 ):
     """SiLU kernel: out = x * sigmoid(x)"""
@@ -87,7 +88,8 @@ def fused_silu(x):
     with TIMER.record("fused_silu"):
         _fused_silu_kernel[(N,)](
             x_2d, out,
-            x_2d.stride(0), N, D,
+            x_2d.stride(0), N,
+            D=D,
             BLOCK_D=BLOCK_D,
         )
     return out.reshape(orig_shape)

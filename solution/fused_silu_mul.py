@@ -31,7 +31,8 @@ def _fused_silu_mul_kernel(
     y_ptr,      # [N, D] — up output (fp16)
     out_ptr,    # [N, D] — result (fp16)
     stride_n,
-    N, D,
+    N,
+    D: tl.constexpr,
     BLOCK_D: tl.constexpr,
 ):
     """out = SiLU(x) * y"""
@@ -76,7 +77,8 @@ def fused_silu_mul(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         _fused_silu_mul_kernel[(N,)](
             x_2d, y_2d, out,
             x_2d.stride(0),
-            N, D,
+            N,
+            D=D,
             BLOCK_D=BLOCK_D,
         )
 
