@@ -1,15 +1,15 @@
 """
 fused_cross_entropy.py — Fused Cross-Entropy with online log-sum-exp.
-ПАТЧИТ: Qwen2ForCausalLM.forward
-Экономия: ~8-10 ГБ памяти (не материализует softmax по 152K).
 
-ИСПРАВЛЕНИЯ v2:
-  - Не даём оригинальному forward считать loss (убираем labels из kwargs)
-  - Это убирает двойную работу и утечку autograd graph
-  - Правильный BLOCK_V для V=152K
+ИСПРАВЛЕНИЕ v3:
+  - Подменяем torch.nn.functional.cross_entropy
+  - Оригинальный forward работает как обычно (сохраняет autograd)
+  - Внутри используется наш fused кернел
+  - НЕ ломаем autograd graph!
 """
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import triton
 import triton.language as tl
 from .utils import TIMER
@@ -102,13 +102,14 @@ def _fused_ce_backward_kernel(
 
 
 class FusedCEFunction(torch.autograd.Function):
+    """
+    Fused cross-entropy that preserves autograd.
+    """
     @staticmethod
     def forward(ctx, logits, labels, ignore_index=-100):
         N, V = logits.shape
         logits_f32 = logits.float() if logits.dtype == torch.float16 else logits
         per_token_loss = torch.empty(N, device=logits.device, dtype=torch.float32)
-
-        # Optimal BLOCK_V: for V=152K, use 4096 (fits in shared mem)
         BLOCK_V = 4096
 
         with TIMER.record("fused_ce_forward"):
@@ -148,47 +149,59 @@ class FusedCEFunction(torch.autograd.Function):
         return grad_logits, None, None
 
 
-class FusedCrossEntropyLoss(nn.Module):
-    def __init__(self, ignore_index=-100):
-        super().__init__()
-        self.ignore_index = ignore_index
-
-    def forward(self, logits, labels):
-        if logits.dim() == 3:
-            B, S, V = logits.shape
-            logits = logits.reshape(-1, V)
-            labels = labels.reshape(-1)
-        return FusedCEFunction.apply(logits, labels, self.ignore_index)
+def fused_cross_entropy(logits, labels, ignore_index=-100):
+    """
+    Fused cross-entropy loss.
+    Drop-in replacement for F.cross_entropy.
+    """
+    if logits.dim() == 3:
+        B, S, V = logits.shape
+        logits = logits.reshape(-1, V)
+        labels = labels.reshape(-1)
+    return FusedCEFunction.apply(logits, labels, ignore_index)
 
 
 def patch_cross_entropy():
     """
-    РЕАЛЬНЫЙ ПАТЧ: Qwen2ForCausalLM.forward
-
-    ИСПРАВЛЕНИЕ v2: НЕ даём оригинальному forward считать loss.
-    Убираем labels из kwargs перед вызовом — тогда forward не тратит
-    время на CE и не создаёт autograd graph для loss.
-    Мы считаем loss сами через fused kernel.
+    ИСПРАВЛЕНИЕ v3: Подменяем torch.nn.functional.cross_entropy.
+    
+    Оригинальный forward Qwen2 работает как обычно,
+    но внутри использует наш fused кернел.
+    Autograd graph сохраняется!
     """
-    try:
-        from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM
-        _orig = Qwen2ForCausalLM.forward
-
-        def patched(self, *args, **kwargs):
-            labels = kwargs.pop('labels', None)
-
-            # Вызываем оригинальный forward БЕЗ labels — он не будет считать loss
-            outputs = _orig(self, *args, **kwargs)
-
-            # Считаем loss сами через fused kernel
-            if labels is not None:
-                logits = outputs.logits
-                shift_logits = logits[..., :-1, :].contiguous()
-                shift_labels = labels[..., 1:].contiguous()
-                outputs.loss = FusedCrossEntropyLoss()(shift_logits, shift_labels)
-
-            return outputs
-
-        Qwen2ForCausalLM.forward = patched
-    except (ImportError, AttributeError):
-        pass
+    # Сохраняем оригинал
+    _original_cross_entropy = F.cross_entropy
+    
+    def patched_cross_entropy(input, target, weight=None, ignore_index=-100, 
+                              reduction='mean', label_smoothing=0.0):
+        # Если есть weight или label_smoothing — используем оригинал
+        if weight is not None or label_smoothing > 0:
+            return _original_cross_entropy(input, target, weight=weight,
+                                          ignore_index=ignore_index,
+                                          reduction=reduction,
+                                          label_smoothing=label_smoothing)
+        
+        # Используем наш fused кернел
+        loss = fused_cross_entropy(input, target, ignore_index=ignore_index)
+        
+        # Reduction уже сделан (mean) в fused_cross_entropy
+        # Если нужен sum — умножаем на количество валидных токенов
+        if reduction == 'sum':
+            valid = target != ignore_index
+            loss = loss * valid.sum()
+        elif reduction == 'none':
+            # Для none нужно вернуть per-token loss
+            # Но наш кернел уже сделал mean, так что fallback
+            return _original_cross_entropy(input, target, weight=weight,
+                                          ignore_index=ignore_index,
+                                          reduction=reduction,
+                                          label_smoothing=label_smoothing)
+        
+        return loss
+    
+    # Подменяем
+    F.cross_entropy = patched_cross_entropy
+    
+    # Также подменяем в torch.nn.functional (на случай если импортировали напрямую)
+    import torch.nn.functional
+    torch.nn.functional.cross_entropy = patched_cross_entropy
