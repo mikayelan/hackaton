@@ -1,0 +1,33 @@
+# task.yaml — Soup Kernel Challenge task config
+# DO NOT MODIFY — checked by harness
+
+model:
+  name: Qwen/Qwen2.5-1.5B-Instruct
+  quantization:
+    bits: 4
+    method: nf4
+
+lora:
+  r: 16
+  alpha: 32
+  target_modules:
+    - q_proj
+    - v_proj
+  dropout: 0.0
+
+training:
+  batch_size: 4
+  max_seq_length: 512
+  num_epochs: 1
+  learning_rate: 2.0e-4
+  optimizer: adamw
+  warmup_ratio: 0.03
+
+data:
+  dataset: AmanMussa/kazakh-instruction-v2
+  format: alpaca
+  train_size: 256
+  fields:
+    - instruction
+    - input
+    - output
